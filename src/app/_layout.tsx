@@ -1,18 +1,50 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { JournalProvider } from "@/hooks/use-journal";
+import { colors } from "@/components/ui";
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+// Keep the tabs beneath any deep-linked or reloaded screen so back always works.
+export const unstable_settings = { anchor: "(tabs)" };
 
-SplashScreen.preventAutoHideAsync();
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function Layout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <JournalProvider>
+          <StatusBar style="dark" />
+          <Stack
+            screenOptions={{
+              headerShadowVisible: false,
+              headerStyle: { backgroundColor: colors.bg },
+              headerTintColor: colors.ink,
+              headerTitleStyle: { fontWeight: "600" },
+              headerBackButtonDisplayMode: "minimal",
+              contentStyle: { backgroundColor: colors.bg },
+            }}
+          >
+            <Stack.Screen
+              name="(tabs)"
+              options={{ headerShown: false, title: "Follicle" }}
+            />
+            <Stack.Screen name="add-photo" options={{ title: "New photo" }} />
+            <Stack.Screen name="import" options={{ title: "Import photos" }} />
+            <Stack.Screen
+              name="capture"
+              options={{
+                headerShown: false,
+                presentation: "fullScreenModal",
+                contentStyle: { backgroundColor: "#060B0A" },
+              }}
+            />
+            <Stack.Screen name="photo/[id]" options={{ title: "" }} />
+            <Stack.Screen name="line-up" options={{ title: "Line up" }} />
+            <Stack.Screen name="treatment" options={{ title: "Treatment" }} />
+            <Stack.Screen name="account" options={{ title: "Account" }} />
+          </Stack>
+        </JournalProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

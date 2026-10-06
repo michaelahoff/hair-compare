@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "same-photo-control",
+      "tags": ["real-photo", "identical-pair", "crown"],
+      "consent_confirmed": false,
+      "previous": {
+        "path": "images/crown.jpg",
+        "view": "crown",
+        "taken_at": "2026-09-02T12:00:00.000Z",
+        "hair_length": "short",
+        "hair_wet": false,
+        "notes": null
+      },
+      "current": {
+        "path": "images/crown.jpg",
+        "view": "crown",
+        "taken_at": "2026-10-02T12:00:00.000Z",
+        "hair_length": "short",
+        "hair_wet": false,
+        "notes": null
+      },
+      "treatments": [],
+      "expected": {
+        "changes": ["stable", "uncertain"]
+      }
+    }
+  ]
+}

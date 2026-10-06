@@ -41,3 +41,13 @@ example
 # generated native folders
 /ios
 /android
+
+# local env
+.env
+
+# deno
+supabase/.temp/
+supabase/functions/node_modules/
+
+# Private evaluation images, model reports and human scores
+/.model-eval/
