@@ -38,7 +38,7 @@ export function assessmentInputs(
       )
     : (latestFirst[0] ?? null);
   if (previous === undefined)
-    throw new Error("Compare with an earlier photo of the same view.");
+    throw new Error("Compare with another photo of the same view, taken the same day or earlier.");
   // Treatments are dated by calendar day, as the edge function compares them.
   const day = photo.taken_at.slice(0, 10);
   const treatments = journal.treatments

@@ -131,6 +131,7 @@ function useSnappedPlacement(id: string, target: Placement) {
 export function FramedPhoto({
   photo,
   turn,
+  variant = "head",
   width,
   height,
   unframed = "guide",
@@ -139,6 +140,8 @@ export function FramedPhoto({
 }: {
   photo: Photo;
   turn: number;
+  /** The guide picture it is shown on. */
+  variant?: GuideStyle;
   width: number;
   height: number;
   unframed?: Unframed;
@@ -151,7 +154,13 @@ export function FramedPhoto({
   const box = { width: base.width * size, height: base.height * size };
   const placement = useSnappedPlacement(
     photo.id,
-    placementOf(framingOf(photo), turn, unframed, { width, height }, base),
+    placementOf(
+      framingOf(photo, variant),
+      turn,
+      unframed,
+      { width, height },
+      base,
+    ),
   );
   const placed = useAnimatedStyle(() => ({
     transform: [
@@ -185,12 +194,14 @@ export function FramedPhoto({
 export function FramedThumb({
   photo,
   turn,
+  variant,
   width,
   height,
   style,
 }: {
   photo: Photo;
   turn: number;
+  variant?: GuideStyle;
   width: number;
   height: number;
   style?: StyleProp<ViewStyle>;
@@ -201,6 +212,7 @@ export function FramedThumb({
       <FramedPhoto
         photo={photo}
         turn={turn}
+        variant={variant}
         width={width}
         height={height}
         unframed="cover"

@@ -40,7 +40,7 @@ import { useViewGuide } from "@/hooks/use-preferences";
 import { saveAlignment } from "@/lib/repository";
 import { requestDevMatch } from "@/lib/dev-analysis";
 import { POINT_TOLERANCE } from "@/lib/match";
-import { IDENTITY, framingOf } from "@/lib/framing";
+import { IDENTITY, framingOf, placedOn } from "@/lib/framing";
 import { inspectPoints, pinPresets, type PinPreset } from "@/lib/guide-art";
 import {
   MAX_PINS,
@@ -109,9 +109,10 @@ function Adjust({ reference, photo }: { reference: Photo; photo: Photo }) {
   const paneHeight = Math.round(
     Math.max(200, Math.min(Math.min(width, 560) - 32, (height - 420) / 2)),
   );
+  // Moved, pinned and saved on the picture shown.
   const start = {
-    before: framingOf(shown.before) ?? IDENTITY,
-    after: framingOf(shown.after) ?? IDENTITY,
+    before: framingOf(shown.before, guide) ?? IDENTITY,
+    after: framingOf(shown.after, guide) ?? IDENTITY,
   };
   const edits: Record<Side, FramingEdit> = {
     before: useFramingEdit(start.before),
@@ -203,8 +204,8 @@ function Adjust({ reference, photo }: { reference: Photo; photo: Photo }) {
     }
   }
   function reset() {
-    loadFraming(edits.before, framingOf(shown.before));
-    loadFraming(edits.after, framingOf(shown.after));
+    loadFraming(edits.before, framingOf(shown.before, guide));
+    loadFraming(edits.after, framingOf(shown.after, guide));
     setPins(firstPins);
     setMessage("");
   }
@@ -217,6 +218,7 @@ function Adjust({ reference, photo }: { reference: Photo; photo: Photo }) {
         ...settledFraming(edits[side]),
         source: edits[side].touched.get() ? "manual" : (kept?.source ?? "auto"),
         pins: pins.map((p) => ({ id: p.id, name: p.name, ...p[side] })),
+        ...placedOn(view, guide),
       });
     }
   });

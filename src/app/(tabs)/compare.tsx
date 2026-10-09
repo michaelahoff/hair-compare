@@ -10,7 +10,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { useJournal } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
-import { usePreferences } from "@/hooks/use-preferences";
+import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
 import {
   Button,
   Card,
@@ -107,6 +107,7 @@ function PhotoStrip({
               <FramedThumb
                 photo={photo}
                 turn={preferences.turns[photo.view] ?? 0}
+                variant={guideStyleOf(preferences, photo.view)}
                 width={THUMB}
                 height={THUMB}
                 style={{

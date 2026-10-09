@@ -80,13 +80,16 @@ export function JournalProvider({ children }: PropsWithChildren) {
     </QueryClientProvider>
   );
 }
+/** Where the journal is cached for `owner`, for reading or patching it. */
+export const journalKey = (owner: string) => ["journal", owner];
+
 export function useAccount() {
   return useContext(AuthContext);
 }
 export function useJournal() {
   const { owner, ready } = useAccount();
   return useQuery({
-    queryKey: ["journal", owner],
+    queryKey: journalKey(owner),
     queryFn: () => repository.readJournal(owner),
     enabled: ready,
     refetchInterval: owner === "local" ? false : 30 * 60 * 1000,
@@ -99,6 +102,6 @@ export function useJournalMutation<T, R>(
   const cache = useQueryClient();
   return useMutation({
     mutationFn: (input: T) => action(owner, input),
-    onSuccess: () => cache.invalidateQueries({ queryKey: ["journal", owner] }),
+    onSuccess: () => cache.invalidateQueries({ queryKey: journalKey(owner) }),
   });
 }

@@ -1,4 +1,6 @@
 import { IDENTITY, type Similarity } from "./alignment/transform";
+import { guideCarry, guideKey, type GuideStyle } from "./guide-art";
+import type { ScalpView } from "./model";
 
 /**
  * Where a photo sits on its view's guide, so every photo of a view lines up
@@ -14,16 +16,43 @@ export type Framing = Similarity & {
   source?: "manual" | "auto";
   /** Features marked on the photo; pins with the same id mark the same spot. */
   pins?: Pin[];
+  /**
+   * The picture it was placed on, when that was the close-up of the whorl;
+   * otherwise the whole head. Framings are read on whichever picture shows.
+   */
+  guide?: "closeup";
 };
 
 /** A feature marked on a photo, e.g. the whorl's centre, in photo fractions. */
 export type Pin = { id: string; name: string; x: number; y: number };
 
-/** Stored framing, ignoring legacy pair alignments (which carry `refPhotoId`). */
-export function framingOf(photo: { alignment: unknown }): Framing | null {
+/**
+ * A photo's framing on `variant`, its view's whole-head picture by default:
+ * one placed on the other picture is carried across, so photos placed on
+ * either line up. Ignores legacy pair alignments (which carry `refPhotoId`).
+ */
+export function framingOf(
+  photo: { alignment: unknown; view?: ScalpView },
+  variant: GuideStyle = "head",
+): Framing | null {
   const value = photo.alignment as (Framing & { refPhotoId?: string }) | null;
   if (!value || value.refPhotoId !== undefined) return null;
-  return value;
+  const from = value.guide ?? "head";
+  if (!photo.view || from === variant) return value;
+  const { guide: _placed, ...rest } = value;
+  return {
+    ...rest,
+    ...compose(guideCarry(photo.view, from, variant), value),
+    ...placedOn(photo.view, variant),
+  };
+}
+
+/** What to store with a framing placed on `variant`, so it reads back right. */
+export function placedOn(
+  view: ScalpView,
+  variant: GuideStyle,
+): Pick<Framing, "guide"> {
+  return guideKey(view, variant) === "closeup" ? { guide: "closeup" } : {};
 }
 
 /** A framing as text, to tell when a stored one has changed. */

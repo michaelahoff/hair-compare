@@ -25,7 +25,7 @@ import {
 } from "@/components/ui";
 import { DateField } from "@/components/date-field";
 import { ViewPicker } from "@/components/view-picker";
-import { useAccount } from "@/hooks/use-journal";
+import { journalKey, useAccount } from "@/hooks/use-journal";
 import { useAutoLineUp } from "@/hooks/use-auto-line-up";
 import { takeImports } from "@/lib/capture-store";
 import {
@@ -217,7 +217,7 @@ export default function ImportScreen() {
       }
     }
     // Refresh once rather than after every photo.
-    await cache.invalidateQueries({ queryKey: ["journal", owner] });
+    await cache.invalidateQueries({ queryKey: journalKey(owner) });
     // They snap onto the guide in the journal as each is matched.
     void autoLineUp.lineUp(added);
     setRunning(false);

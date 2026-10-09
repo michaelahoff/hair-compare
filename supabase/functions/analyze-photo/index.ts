@@ -131,7 +131,7 @@ async function handleRequest(req: Request): Promise<Response> {
     );
   if (typeof previousId === "string" && !previous)
     return json(
-      { error: "Compare with an earlier photo of the same view." },
+      { error: "Compare with another photo of the same view, taken the same day or earlier." },
       400,
     );
 

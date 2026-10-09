@@ -308,7 +308,7 @@ const flipPoints = <T extends { x: number }>(points: T[]) =>
 export const CLOSEUP_VIEWS: readonly ScalpView[] = ["top", "crown"];
 
 /** How much closer the close-up picture is than the whole head. */
-export const CLOSEUP_ZOOM = 2.5;
+const CLOSEUP_ZOOM = 2.5;
 /** The whorl on each whole-head picture (0 to 100), which the close-up centres on. */
 const WHORL: Partial<Record<ScalpView, { x: number; y: number }>> = {
   top: { x: 50, y: 54 },

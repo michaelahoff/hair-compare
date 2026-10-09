@@ -29,7 +29,11 @@ import { matchWithClaude } from "@/lib/match";
 import { analyzePhoto } from "@/lib/repository";
 import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
 import { IDENTITY, framingOf } from "@/lib/framing";
-import { inspectPoints, type GuideStyle } from "@/lib/guide-art";
+import {
+  guideCarry,
+  inspectPoints,
+  type GuideStyle,
+} from "@/lib/guide-art";
 import { photoToGuide, regionPolygon } from "@/lib/outline";
 import {
   contextLines,
@@ -75,6 +79,7 @@ function PhotoPane({
   turn,
   zoom,
   grid,
+  variant,
   guide,
   overlay,
   height,
@@ -85,8 +90,10 @@ function PhotoPane({
   turn: number;
   zoom: Zoom;
   grid: boolean;
-  /** The guide to draw over the photo, if any. */
-  guide: GuideStyle | null;
+  /** The view's guide picture, which the photo is shown on. */
+  variant: GuideStyle;
+  /** Draw that picture over the photo. */
+  guide: boolean;
   /** Drawn over the photo inside the zoom, given the frame's size. */
   overlay?: (width: number, height: number) => ReactNode;
   height: number;
@@ -136,6 +143,7 @@ function PhotoPane({
           <FramedPhoto
             photo={photo}
             turn={turn}
+            variant={variant}
             width={width}
             height={height}
             onError={() => setFailed(true)}
@@ -146,7 +154,7 @@ function PhotoPane({
               view={photo.view}
               turn={turn}
               size={Math.min(width, height)}
-              variant={guide}
+              variant={variant}
             />
           )}
         </View>
@@ -319,8 +327,11 @@ export function ComparisonViewer({
    * photo follows the before.
    */
   function adjust() {
-    const [ref, id] = target ? [other, target] : [before, after];
-    router.push({ pathname: "/adjust", params: { ref: ref.id, id: id.id } });
+    const [fixed, moving] = target ? [other, target] : [before, after];
+    router.push({
+      pathname: "/adjust",
+      params: { ref: fixed.id, id: moving.id },
+    });
   }
 
   // Step 2: analyse the after photo against this before photo.
@@ -388,7 +399,7 @@ export function ComparisonViewer({
 
   // What the analysis inspected, on the guide, so it lands on both photos.
   const shapes: InspectShape[] = useMemo(() => {
-    const framing = framingOf(after);
+    const framing = framingOf(after, guideStyle);
     if (!pairAnalysis || !framing) return [];
     return pairAnalysis.result.regions.flatMap((region, i) => {
       const polygon = regionPolygon(region);
@@ -403,7 +414,7 @@ export function ComparisonViewer({
           ]
         : [];
     });
-  }, [pairAnalysis, after]);
+  }, [pairAnalysis, after, guideStyle]);
   // Once the findings have been read out, the bubble tucks away to a button.
   const reading = pairAnalysis ? `${pairAnalysis.id}:${replay}` : "";
   const [heard, setHeard] = useState("");
@@ -433,11 +444,13 @@ export function ComparisonViewer({
             turn={turn}
             zoom={zoom}
             grid={grid}
-            guide={guide ? guideStyle : null}
+            variant={guideStyle}
+            guide={guide}
             overlay={(width, height) => (
               <>
                 {side === "after" && changeReady && (
                   <ChangeOverlay
+                    carry={guideCarry(view, "head", guideStyle)}
                     map={changeReady.map}
                     turn={turn}
                     size={Math.min(width, height)}

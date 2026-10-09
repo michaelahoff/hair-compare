@@ -4,7 +4,7 @@ import { router } from "expo-router";
 import { FramedThumb } from "@/components/framed-photo";
 import { MonthHead, Rail } from "@/components/timeline";
 import { Icon, colors } from "@/components/ui";
-import { usePreferences } from "@/hooks/use-preferences";
+import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
 import {
   KIND_LABELS,
   VIEW_LABELS,
@@ -160,6 +160,7 @@ export function JournalLog({
                           <FramedThumb
                             photo={photo}
                             turn={preferences.turns[photo.view] ?? 0}
+                            variant={guideStyleOf(preferences, photo.view)}
                             width={THUMB_WIDTH}
                             height={THUMB_HEIGHT}
                             style={[styles.thumb, on && styles.thumbOn]}

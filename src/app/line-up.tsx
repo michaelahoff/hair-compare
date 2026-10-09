@@ -41,6 +41,7 @@ import {
   compose,
   framingKey,
   framingOf,
+  placedOn,
   type Framing,
 } from "@/lib/framing";
 import { VIEW_LABELS, errorMessage, formatDate, type Photo } from "@/lib/model";
@@ -88,7 +89,8 @@ function LineUp({ photo }: { photo: Photo }) {
     setVariant,
   } = useViewGuide(photo.view);
   const { width, height } = useWindowDimensions();
-  const edit = useFramingEdit(framingOf(photo));
+  // Edited, matched and saved on the picture shown.
+  const edit = useFramingEdit(framingOf(photo, guide));
   const timeline = timelineOf(journal.data?.photos ?? [], photo.view);
   const reference = referenceFor(photo, timeline);
   // An unframed photo with something to match against matches straight away.
@@ -105,7 +107,7 @@ function LineUp({ photo }: { photo: Photo }) {
   );
   // Saved elsewhere meanwhile, e.g. by pinning it on the pair screen: show
   // that framing, so Save here can't put back the old one.
-  const stored = framingOf(photo);
+  const stored = framingOf(photo, guide);
   const storedKey = framingKey(stored);
   const [shownKey, setShownKey] = useState(storedKey);
   if (shownKey !== storedKey) {
@@ -123,15 +125,20 @@ function LineUp({ photo }: { photo: Photo }) {
   const autoLineUp = useAutoLineUp();
   const unframed = timeline.filter((p) => p.id !== id && !framingOf(p)).length;
   /**
-   * The other picture. The view's lined-up photos, this one included, are
-   * carried onto it, so this photo moves with it rather than snapping back.
+   * The other picture. A photo already placed is carried onto it, so it stays
+   * lined up; one not placed yet stays as it was taken.
    */
   function switchGuide() {
     const next = guide === "closeup" ? "head" : "closeup";
-    const carry = guideCarry(photo.view, guide, next);
-    if (stored) seen.current = framingKey(compose(carry, stored));
-    snapFraming(edit, compose(carry, settledFraming(edit)));
-    setVariant(next).catch((e) => setError(errorMessage(e)));
+    // Its stored framing reads differently on the other picture; that's this
+    // carry, not a change made elsewhere, so don't snap back to it.
+    seen.current = framingKey(framingOf(photo, next));
+    if (stored || edit.touched.get())
+      snapFraming(
+        edit,
+        compose(guideCarry(photo.view, guide, next), settledFraming(edit)),
+      );
+    setVariant(next);
   }
   const size = Math.round(Math.min(Math.min(width, 560) - 32, height * 0.58));
   const scanning = phase === "matching" || phase === "ai";
@@ -155,7 +162,7 @@ function LineUp({ photo }: { photo: Photo }) {
     try {
       const framing = await (withClaude ? matchWithClaude : matchFraming)(
         reference,
-        framingOf(reference)!,
+        framingOf(reference, guide)!,
         photo,
       );
       if (!framing) {
@@ -190,6 +197,7 @@ function LineUp({ photo }: { photo: Photo }) {
         ...settledFraming(edit),
         source: "manual",
         pins: framingOf(photo)?.pins,
+        ...placedOn(photo.view, guide),
       });
       if (unframed) {
         setSaved(true);

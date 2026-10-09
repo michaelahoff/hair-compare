@@ -21,7 +21,7 @@ export function LinedUpPhoto({
   onOriginal: () => void;
 }) {
   const zoom = useZoom();
-  const { turn } = useViewGuide(photo.view);
+  const { turn, variant } = useViewGuide(photo.view);
   return (
     <ZoomFrame
       zoom={zoom}
@@ -51,6 +51,7 @@ export function LinedUpPhoto({
         <FramedPhoto
           photo={photo}
           turn={turn}
+          variant={variant}
           width={width}
           height={height}
           unframed="contain"

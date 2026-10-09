@@ -1,6 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useAccount } from "./use-journal";
+import { journalKey, useAccount } from "./use-journal";
 import { readJournal, saveAlignment } from "@/lib/repository";
 import { IDENTITY, framingOf, type Framing } from "@/lib/framing";
 import { matchFraming, referenceFor } from "@/lib/match";
@@ -41,10 +41,10 @@ export function useLineUpState(id: string) {
 }
 
 async function journalWith(owner: string, cache: QueryClient, id: string) {
-  const cached = cache.getQueryData<Journal>(["journal", owner]);
+  const cached = cache.getQueryData<Journal>(journalKey(owner));
   if (cached?.photos.some((p) => p.id === id)) return cached;
   return cache.fetchQuery({
-    queryKey: ["journal", owner],
+    queryKey: journalKey(owner),
     queryFn: () => readJournal(owner),
   });
 }
@@ -60,7 +60,7 @@ async function store(
   alignment: Framing,
 ) {
   await saveAlignment(owner, id, alignment);
-  cache.setQueryData<Journal>(["journal", owner], (current) =>
+  cache.setQueryData<Journal>(journalKey(owner), (current) =>
     current
       ? {
           ...current,

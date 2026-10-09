@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { FramedThumb } from "@/components/framed-photo";
+import { useViewGuide } from "@/hooks/use-preferences";
 import { colors, fonts } from "@/components/ui";
 import {
   VIEW_LABELS,
@@ -30,6 +31,7 @@ export function ProgressStrip({
   turn: number;
   onPress: () => void;
 }) {
+  const { variant } = useViewGuide(after.view);
   return (
     <Pressable
       accessibilityRole="button"
@@ -42,6 +44,7 @@ export function ProgressStrip({
           key={photo.id}
           photo={photo}
           turn={turn}
+          variant={variant}
           width={THUMB}
           height={THUMB + 10}
           style={styles.thumb}
