@@ -83,6 +83,7 @@ Run `npx eas-cli@latest build:configure`, choose your own iOS bundle identifier 
 
 - `src/app/`: Expo Router screens.
 - `src/components/`: UI, assessment display and gesture comparison viewer.
+- `src/components/home/`: the head map, progress strip and dated log on the Photos tab.
 - `src/hooks/use-journal.tsx`: session lifecycle and React Query hooks.
 - `src/lib/repository.ts`: device/cloud data operations and private image access.
 - `src/lib/photos.ts`: JPEG preparation and working-image registration.

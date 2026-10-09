@@ -179,7 +179,7 @@ function TreatmentSpan({
             borderRadius: 4,
             left: `${(start / total) * 100}%`,
             width: `${(Math.max(0, end - start) / total) * 100}%`,
-            backgroundColor: colors.accent,
+            backgroundColor: colors.rust,
           }}
         />
       </View>

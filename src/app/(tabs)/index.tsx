@@ -1,131 +1,93 @@
-import { useState } from "react";
-import {
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { router } from "expo-router";
 import { useJournal } from "@/hooks/use-journal";
+import { useComparison } from "@/hooks/use-comparison";
 import {
   Button,
-  Chips,
   Empty,
-  Fab,
+  Eyebrow,
   Icon,
-  Pill,
   Screen,
-  SectionTitle,
   colors,
   s,
 } from "@/components/ui";
 import { JournalState } from "@/components/journal-state";
-import { FramedPhoto } from "@/components/framed-photo";
-import { useComparison } from "@/hooks/use-comparison";
 import {
+  FRESHNESS_COLOR,
+  FRESHNESS_LABEL,
+  FRESHNESS_TONE,
+  HeadMap,
+  freshness,
+  type Freshness,
+} from "@/components/home/head-map";
+import { ProgressStrip } from "@/components/home/progress-strip";
+import { JournalLog } from "@/components/home/journal-log";
+import {
+  SCALP_VIEWS,
   VIEW_LABELS,
   elapsedDays,
-  formatDate,
+  localDate,
   type Photo,
   type ScalpView,
 } from "@/lib/model";
 
-const COLUMNS = 3;
-const GAP = 6;
-
-function monthOf(photo: Photo) {
-  return new Date(`${photo.taken_at.slice(0, 10)}T12:00:00`).toLocaleDateString(
-    undefined,
-    { month: "long", year: "numeric" },
-  );
+function ago(date: string) {
+  const days = elapsedDays(date);
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 60) return `${days} days ago`;
+  return `${Math.round(days / 30)} months ago`;
 }
 
-/** The pair last chosen on Compare (first and latest until then), lined up. */
-function ProgressCard({ photos }: { photos: Photo[] }) {
-  const comparison = useComparison(photos);
-  const [side, setSide] = useState(0);
-  const { before, after } = comparison.pairOf(comparison.view);
-  if (!comparison.ready || !before || !after || before.id === after.id)
-    return null;
-  const view = after.view;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Compare ${VIEW_LABELS[view]}: ${formatDate(before.taken_at)} to ${formatDate(after.taken_at)}`}
-      onPress={() => router.navigate("/compare")}
-      style={({ pressed }) => [
-        styles.progress,
-        { transform: [{ scale: pressed ? 0.98 : 1 }] },
-      ]}
-    >
-      <View style={s.row}>
-        <Text style={styles.progressTitle}>{VIEW_LABELS[view]}</Text>
-        <Icon name="chevron" color="#FFF" />
-      </View>
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        {[before, after].map((photo, index) => (
-          <View key={photo.id} style={{ flex: 1, gap: 6 }}>
-            <View
-              style={styles.progressImage}
-              onLayout={(e) => setSide(e.nativeEvent.layout.width)}
-            >
-              {side > 0 && (
-                <FramedPhoto
-                  photo={photo}
-                  turn={comparison.turns[view] ?? 0}
-                  width={side}
-                  height={side}
-                />
-              )}
-            </View>
-            <Text style={styles.progressDate}>
-              {index ? "After" : "Before"} · {formatDate(photo.taken_at)}
-            </Text>
-          </View>
-        ))}
-        <View style={styles.progressDays}>
-          <Text style={styles.progressDaysText}>
-            {elapsedDays(before.taken_at, after.taken_at)}
-          </Text>
-          <Text style={styles.progressDaysUnit}>days</Text>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
+/**
+ * Home: the journal's span for one region, the head to pick that region,
+ * and the dated log beneath. The region is the one Compare shows, so the
+ * two screens stay in step.
+ */
 export default function PhotosScreen() {
   const journal = useJournal();
-  const [view, setView] = useState<ScalpView | "all">("all");
   const { width } = useWindowDimensions();
-  const tile = (Math.min(width, 560) - 32 - GAP * (COLUMNS - 1)) / COLUMNS;
-  const all = [...(journal.data?.photos ?? [])].sort((a, b) =>
-    b.taken_at.localeCompare(a.taken_at),
+  const photos = journal.data?.photos ?? [];
+  const comparison = useComparison(photos);
+  const view = comparison.view;
+  const latest = Object.fromEntries(
+    SCALP_VIEWS.map((v) => [
+      v,
+      photos
+        .filter((p) => p.view === v)
+        .reduce<Photo | undefined>(
+          (best, p) => (!best || p.taken_at > best.taken_at ? p : best),
+          undefined,
+        ),
+    ]),
+  ) as Record<ScalpView, Photo | undefined>;
+  const fresh = Object.fromEntries(
+    SCALP_VIEWS.map((v) => [v, freshness(latest[v])]),
+  ) as Record<ScalpView, Freshness>;
+  // The region most in need of a photo, if that isn't the one selected.
+  const rank: Freshness[] = ["due", "aging"];
+  const overdue = [...SCALP_VIEWS]
+    .filter((v) => v !== view && rank.includes(fresh[v]))
+    .sort((a, b) => rank.indexOf(fresh[a]) - rank.indexOf(fresh[b]))[0];
+  const { ordered, before, after } = comparison.pairOf(view);
+  const first = photos.reduce<Photo | undefined>(
+    (best, p) => (!best || p.taken_at < best.taken_at ? p : best),
+    undefined,
   );
-  const photos = all.filter((p) => view === "all" || p.view === view);
-  const months = new Map<string, Photo[]>();
-  for (const photo of photos) {
-    const month = monthOf(photo);
-    months.set(month, [...(months.get(month) ?? []), photo]);
-  }
+  const today = localDate();
+  const active = (journal.data?.treatments ?? []).filter(
+    (t) => t.started_on <= today && (!t.ended_on || t.ended_on > today),
+  ).length;
+  const map = Math.min(168, (Math.min(width, 560) - 32 - 36) * 0.44);
+  const ready = !journal.isPending && !journal.error && comparison.ready;
   return (
-    <Screen
-      fab={
-        <Fab
-          icon="camera"
-          label="Take photo"
-          onPress={() => router.push("/capture")}
-        />
-      }
-    >
+    <Screen>
       <JournalState
-        loading={journal.isPending}
+        loading={journal.isPending || (!journal.error && !comparison.ready)}
         error={journal.error}
         retry={() => void journal.refetch()}
       />
-      {!all.length && !journal.isPending && !journal.error ? (
+      {ready && !photos.length && (
         <Empty
           icon="camera"
           title="Take your first photo"
@@ -145,70 +107,94 @@ export default function PhotosScreen() {
             </View>
           }
         />
-      ) : (
+      )}
+      {ready && photos.length > 0 && first && (
         <>
-          <ProgressCard photos={all} />
-          <Chips
-            values={[
-              { value: "all", label: "All" },
-              ...Object.entries(VIEW_LABELS).map(([value, label]) => ({
-                value: value as ScalpView,
-                label,
-              })),
-            ]}
-            selected={view}
-            onChange={setView}
-          />
-          {[...months].map(([month, items]) => (
-            <View key={month} style={{ gap: 10 }}>
-              <SectionTitle detail={String(items.length)}>{month}</SectionTitle>
-              <View
-                style={{ flexDirection: "row", flexWrap: "wrap", gap: GAP }}
-              >
-                {items.map((photo) => (
-                  <Pressable
-                    key={photo.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${VIEW_LABELS[photo.view]}, ${formatDate(photo.taken_at)}`}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/photo/[id]",
-                        params: { id: photo.id },
-                      })
-                    }
-                    style={({ pressed }) => ({
-                      width: tile,
-                      height: tile * 1.2,
-                      borderRadius: 16,
-                      overflow: "hidden",
-                      backgroundColor: colors.stage,
-                      transform: [{ scale: pressed ? 0.96 : 1 }],
-                    })}
-                  >
-                    <Image
-                      source={{ uri: photo.uri }}
-                      style={StyleSheet.absoluteFill}
-                      resizeMode="cover"
-                    />
-                    <Text style={styles.tileDay}>
-                      {Number(photo.taken_at.slice(8, 10))}
-                    </Text>
-                    {view === "all" && (
-                      <View style={styles.tileView}>
-                        <Pill tone="dark">{VIEW_LABELS[photo.view]}</Pill>
-                      </View>
-                    )}
-                  </Pressable>
-                ))}
+          <Eyebrow style={{ marginTop: -4 }}>
+            {`${elapsedDays(first.taken_at)} days · ${photos.length} photo${photos.length === 1 ? "" : "s"} · ${active} active treatment${active === 1 ? "" : "s"}`}
+          </Eyebrow>
+
+          {before && after && before.id !== after.id ? (
+            <ProgressStrip
+              before={before}
+              after={after}
+              count={ordered.length}
+              turn={comparison.turns[view] ?? 0}
+              onPress={() => router.navigate("/compare")}
+            />
+          ) : (
+            <View style={styles.stripEmpty}>
+              <Text style={styles.stripEmptyText}>
+                {ordered.length
+                  ? `One ${VIEW_LABELS[view].toLowerCase()} photo so far. The next one starts the comparison.`
+                  : `No ${VIEW_LABELS[view].toLowerCase()} photos yet.`}
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.head}>
+            <View style={{ flexDirection: "row", gap: 16, alignItems: "center" }}>
+              <HeadMap
+                size={map}
+                selected={view}
+                fresh={fresh}
+                onSelect={comparison.setView}
+              />
+              <View style={{ flex: 1, gap: 5 }}>
+                <Eyebrow tone={FRESHNESS_TONE[fresh[view]]}>
+                  {FRESHNESS_LABEL[fresh[view]]}
+                </Eyebrow>
+                <Text style={styles.region}>{VIEW_LABELS[view]}</Text>
+                <Text style={s.muted}>
+                  {ordered.length
+                    ? `${ordered.length} photo${ordered.length === 1 ? "" : "s"} · last ${ago(latest[view]!.taken_at)}`
+                    : "Tap a region to switch"}
+                </Text>
+                <Button
+                  label="Photograph"
+                  icon="camera"
+                  style={styles.photograph}
+                  onPress={() =>
+                    router.push({ pathname: "/capture", params: { view } })
+                  }
+                />
               </View>
             </View>
-          ))}
-          {!photos.length && view !== "all" && (
-            <Empty
-              icon="photos"
-              title={`No ${VIEW_LABELS[view].toLowerCase()} photos`}
-            />
-          )}
+            {overdue && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Switch to ${VIEW_LABELS[overdue]}, ${FRESHNESS_LABEL[fresh[overdue]].toLowerCase()}`}
+                onPress={() => comparison.setView(overdue)}
+                style={styles.nudge}
+              >
+                <View style={[styles.dot, { backgroundColor: FRESHNESS_COLOR[fresh[overdue]] }]} />
+                <Text style={styles.nudgeText}>
+                  {VIEW_LABELS[overdue]} {FRESHNESS_LABEL[fresh[overdue]].toLowerCase()}
+                  {latest[overdue] ? ` · last ${ago(latest[overdue]!.taken_at)}` : ""}
+                </Text>
+                <Icon name="chevron" size={14} color={colors.muted} />
+              </Pressable>
+            )}
+            <View style={styles.legend}>
+              {SCALP_VIEWS.map((v) => (
+                <Pressable
+                  key={v}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${VIEW_LABELS[v]}, ${FRESHNESS_LABEL[fresh[v]].toLowerCase()}`}
+                  accessibilityState={{ selected: v === view }}
+                  onPress={() => comparison.setView(v)}
+                  style={[styles.legendItem, v === view && styles.legendOn]}
+                >
+                  <View style={[styles.dot, { backgroundColor: FRESHNESS_COLOR[fresh[v]] }]} />
+                  <Text style={[styles.legendText, v === view && { color: colors.ink }]}>
+                    {VIEW_LABELS[v]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          <JournalLog journal={journal.data!} highlight={view} />
         </>
       )}
     </Screen>
@@ -216,59 +202,58 @@ export default function PhotosScreen() {
 }
 
 const styles = StyleSheet.create({
-  progress: {
-    backgroundColor: colors.stage,
-    borderRadius: 24,
+  stripEmpty: {
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  stripEmptyText: { fontSize: 13, color: colors.muted, textAlign: "center" },
+  head: {
+    backgroundColor: colors.surface,
+    borderRadius: 22,
     padding: 16,
-    gap: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
-  progressTitle: {
-    color: "#FFF",
-    fontSize: 20,
-    fontWeight: "700",
-    letterSpacing: -0.4,
-  },
-  progressImage: {
-    width: "100%",
-    aspectRatio: 1,
-    borderRadius: 14,
-    backgroundColor: "#22302C",
-    overflow: "hidden",
-  },
-  progressDate: { color: "#B9C7C2", fontSize: 12, fontWeight: "600" },
-  progressDays: {
-    position: "absolute",
-    left: "50%",
-    top: "42%",
-    marginLeft: -32,
-    marginTop: -32,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.loupe,
-    borderWidth: 4,
-    borderColor: colors.stage,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  progressDaysText: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: colors.stage,
-    fontVariant: ["tabular-nums"],
-    lineHeight: 20,
-  },
-  progressDaysUnit: { fontSize: 10, fontWeight: "700", color: colors.stage },
-  tileDay: {
-    position: "absolute",
-    left: 10,
-    bottom: 6,
-    color: "#FFF",
+  region: {
     fontSize: 26,
     fontWeight: "800",
-    letterSpacing: -0.5,
-    textShadowColor: "rgba(0,0,0,0.4)",
-    textShadowRadius: 6,
+    letterSpacing: -0.6,
+    color: colors.ink,
+    lineHeight: 30,
   },
-  tileView: { position: "absolute", top: 8, left: 8 },
+  photograph: { marginTop: 6, alignSelf: "flex-start", minHeight: 42 },
+  nudge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: colors.subtle,
+  },
+  nudgeText: { flex: 1, fontSize: 13, fontWeight: "600", color: colors.ink },
+  legend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    borderTopWidth: 1,
+    borderColor: colors.line,
+    paddingTop: 12,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    height: 30,
+    borderRadius: 999,
+    backgroundColor: colors.bg,
+  },
+  legendOn: { backgroundColor: colors.accentSoft },
+  legendText: { fontSize: 12, fontWeight: "600", color: colors.muted },
+  dot: { width: 8, height: 8, borderRadius: 4 },
 });

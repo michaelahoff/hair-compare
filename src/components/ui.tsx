@@ -1,33 +1,58 @@
 import type { PropsWithChildren, ReactNode } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
   type ColorValue,
+  type StyleProp,
   type TextInputProps,
+  type TextStyle,
   type ViewStyle,
 } from "react-native";
 import { ScrollView } from "react-native-gesture-handler";
 import Svg, { Circle, Ellipse, Path } from "react-native-svg";
 import type { ScalpView } from "@/lib/model";
 
+/**
+ * Sage paper, white bordered cards, moss for actions and photo regions, rust
+ * for treatments, a dark stage behind photos. Dates and counts are set in
+ * the monospaced face so they read as entries in a ledger.
+ */
 export const colors = {
-  bg: "#EEF2F1",
+  bg: "#EDF1EC",
   surface: "#FFFFFF",
-  subtle: "#F3F6F5",
-  ink: "#12201D",
-  muted: "#66756F",
-  line: "#DDE5E2",
-  accent: "#1F6F5E",
-  accentSoft: "#DDEEE8",
+  subtle: "#F3F6F2",
+  ink: "#15211D",
+  muted: "#647069",
+  line: "#D5DED8",
+  rail: "#BFCCC5",
+  accent: "#35684B",
+  accentSoft: "#DCEADF",
+  rust: "#B2552B",
+  rustSoft: "#F6E4DA",
   stage: "#0F1A17",
   loupe: "#F2B544",
   danger: "#B03A48",
   dangerSoft: "#FBEDEF",
 };
+export const fonts = {
+  mono: Platform.select({
+    ios: "ui-monospace",
+    android: "monospace",
+    default: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  }),
+};
+/** The tab bar as the navigator styles it, for screens that recolour it. */
+export const TAB_BAR_STYLE = {
+  backgroundColor: colors.surface,
+  borderTopWidth: 1,
+  borderTopColor: colors.line,
+  elevation: 0,
+} as const;
 export type IconName =
   | "photos"
   | "compare"
@@ -196,6 +221,7 @@ export function Button({
                   : "transparent",
           borderWidth: variant === "secondary" ? 1 : 0,
           borderColor: colors.line,
+          borderRadius: 999,
           opacity: disabled || busy ? 0.45 : pressed ? 0.75 : 1,
           transform: [{ scale: pressed ? 0.98 : 1 }],
         },
@@ -207,7 +233,9 @@ export function Button({
       ) : icon ? (
         <Icon name={icon} color={foreground} size={19} />
       ) : null}
-      <Text style={[s.buttonText, { color: foreground }]}>{label}</Text>
+      <Text numberOfLines={1} style={[s.buttonText, { color: foreground }]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -283,12 +311,13 @@ export function Card({
 export function Pill({
   children,
   tone = "neutral",
-}: PropsWithChildren<{ tone?: "neutral" | "accent" | "dark" }>) {
+}: PropsWithChildren<{ tone?: "neutral" | "accent" | "rust" | "dark" }>) {
   return (
     <View
       style={[
         s.pill,
         tone === "accent" && { backgroundColor: colors.accentSoft },
+        tone === "rust" && s.pillRust,
         tone === "dark" && { backgroundColor: "rgba(15,26,23,0.72)" },
       ]}
     >
@@ -296,6 +325,7 @@ export function Pill({
         style={[
           s.pillText,
           tone === "accent" && { color: colors.accent },
+          tone === "rust" && s.pillRustText,
           tone === "dark" && { color: "#FFF" },
         ]}
       >
@@ -345,13 +375,13 @@ export function Chips<T extends string>({
             accessibilityRole="button"
             accessibilityState={{ selected: on }}
             onPress={() => onChange(value)}
-            style={[s.chip, on && { backgroundColor: colors.ink }]}
+            style={[s.chip, on && s.chipOn]}
           >
             <Text
               style={{
                 fontSize: 14,
                 fontWeight: "600",
-                color: on ? "#FFF" : colors.ink,
+                color: on ? colors.accent : colors.muted,
               }}
             >
               {label}
@@ -405,7 +435,10 @@ export function Notice({
   return (
     <View
       accessibilityRole={error ? "alert" : undefined}
-      style={[s.notice, error && { backgroundColor: colors.dangerSoft }]}
+      style={[
+        s.notice,
+        error && { backgroundColor: colors.dangerSoft, borderColor: colors.dangerSoft },
+      ]}
     >
       <Text
         style={{
@@ -456,6 +489,18 @@ export function SectionTitle({
     </View>
   );
 }
+/** A monospaced, uppercase line: month heads, summaries, counts. */
+export function Eyebrow({
+  children,
+  tone = colors.muted,
+  style,
+}: PropsWithChildren<{ tone?: string; style?: StyleProp<TextStyle> }>) {
+  return (
+    <Text style={[s.eyebrow, { color: tone }, style]}>
+      {typeof children === "string" ? children.toUpperCase() : children}
+    </Text>
+  );
+}
 export function Empty({
   icon,
   title,
@@ -499,6 +544,7 @@ const shadow = {
   shadowOffset: { width: 0, height: 4 },
   elevation: 2,
 } as const;
+const bordered = { borderWidth: 1, borderColor: colors.line } as const;
 export const s = StyleSheet.create({
   body: { fontSize: 15, lineHeight: 22, color: colors.ink },
   muted: { fontSize: 14, lineHeight: 20, color: colors.muted },
@@ -521,8 +567,15 @@ export const s = StyleSheet.create({
     borderRadius: 22,
     padding: 16,
     gap: 14,
-    ...shadow,
+    ...bordered,
   },
+  eyebrow: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    letterSpacing: 1,
+    color: colors.muted,
+  },
+  mono: { fontFamily: fonts.mono, fontVariant: ["tabular-nums"] },
   stage: {
     backgroundColor: colors.stage,
     borderRadius: 22,
@@ -530,8 +583,8 @@ export const s = StyleSheet.create({
   },
   button: {
     minHeight: 50,
-    paddingHorizontal: 18,
-    borderRadius: 16,
+    paddingHorizontal: 20,
+    borderRadius: 999,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -555,8 +608,8 @@ export const s = StyleSheet.create({
     backgroundColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: colors.accent,
-    shadowOpacity: 0.35,
+    shadowColor: colors.stage,
+    shadowOpacity: 0.25,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
     elevation: 6,
@@ -574,6 +627,8 @@ export const s = StyleSheet.create({
     color: colors.muted,
     fontVariant: ["tabular-nums"],
   },
+  pillRust: { backgroundColor: colors.rustSoft },
+  pillRustText: { color: colors.rust },
   input: {
     minHeight: 48,
     backgroundColor: colors.subtle,
@@ -585,11 +640,13 @@ export const s = StyleSheet.create({
   },
   chip: {
     height: 36,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: 18,
     backgroundColor: colors.surface,
     justifyContent: "center",
+    ...bordered,
   },
+  chipOn: { backgroundColor: colors.accentSoft, borderColor: colors.accentSoft },
   segmented: {
     flexDirection: "row",
     backgroundColor: colors.subtle,
@@ -604,7 +661,12 @@ export const s = StyleSheet.create({
     justifyContent: "center",
   },
   segmentOn: { backgroundColor: colors.surface, ...shadow },
-  notice: { padding: 12, borderRadius: 14, backgroundColor: colors.surface },
+  notice: {
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+    ...bordered,
+  },
   emptyIcon: {
     width: 72,
     height: 72,

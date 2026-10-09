@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useJournal } from "@/hooks/use-journal";
-import { Button, Empty, Fab, Pill, Screen, colors, s } from "@/components/ui";
+import { Button, Empty, Fab, Pill, Screen, colors, fonts, s } from "@/components/ui";
 import { JournalState } from "@/components/journal-state";
 import { KIND_LABELS, elapsedDays, formatDate, localDate } from "@/lib/model";
 
@@ -63,12 +63,12 @@ export default function TreatmentsScreen() {
                   <Pill tone={active ? "accent" : "neutral"}>
                     {planned ? "Planned" : ended ? "Ended" : "Active"}
                   </Pill>
-                  <Pill>{KIND_LABELS[t.kind]}</Pill>
+                  <Pill tone="rust">{KIND_LABELS[t.kind]}</Pill>
                 </View>
                 <Text style={styles.name}>{t.name}</Text>
                 {Boolean(t.dosage) && <Text style={s.muted}>{t.dosage}</Text>}
-                <Text style={[s.muted, { fontSize: 13 }]}>
-                  {formatDate(t.started_on)} –{" "}
+                <Text style={styles.dates}>
+                  {formatDate(t.started_on)} →{" "}
                   {t.ended_on ? formatDate(t.ended_on) : "now"}
                 </Text>
               </View>
@@ -103,11 +103,8 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingLeft: 20,
     overflow: "hidden",
-    shadowColor: colors.stage,
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.line,
   },
   rail: {
     position: "absolute",
@@ -117,7 +114,13 @@ const styles = StyleSheet.create({
     width: 5,
     backgroundColor: colors.line,
   },
-  railActive: { backgroundColor: colors.accent },
+  railActive: { backgroundColor: colors.rust },
+  dates: {
+    fontFamily: fonts.mono,
+    fontSize: 12,
+    color: colors.muted,
+    fontVariant: ["tabular-nums"],
+  },
   name: {
     fontSize: 19,
     fontWeight: "700",
@@ -125,8 +128,9 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
   days: {
-    fontSize: 30,
-    fontWeight: "800",
+    fontFamily: fonts.mono,
+    fontSize: 28,
+    fontWeight: "700",
     letterSpacing: -1,
     fontVariant: ["tabular-nums"],
   },

@@ -136,16 +136,15 @@ export default function PhotoScreen() {
               <Pill>{photo.hair_wet ? "Wet" : "Dry"}</Pill>
             </View>
             {Boolean(photo.notes) && <Text style={s.body}>{photo.notes}</Text>}
+            <Button
+              label="Compare"
+              icon="compare"
+              onPress={() => {
+                comparison.focus(photo);
+                router.navigate("/compare");
+              }}
+            />
             <View style={s.wrap}>
-              <Button
-                label="Compare"
-                icon="compare"
-                style={{ flex: 1 }}
-                onPress={() => {
-                  comparison.focus(photo);
-                  router.navigate("/compare");
-                }}
-              />
               <Button
                 label={framingOf(photo) ? "Re-line up" : "Line up"}
                 icon="move"
