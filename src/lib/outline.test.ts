@@ -5,6 +5,7 @@ import {
   lerpPoints,
   mapBetweenPhotos,
   orientClockwise,
+  photoToGuide,
   regionPolygon,
   resample,
   toPath,
@@ -254,5 +255,37 @@ describe("mapBetweenPhotos", () => {
       mapBetweenPhotos([p], portrait, IDENTITY, landscape, turnBack);
     expectPoints(onLandscape({ x: 0.2, y: 0.1 }), [{ x: 0.9, y: 0.2 }]);
     expectPoints(onLandscape({ x: 0, y: 0 }), [{ x: 1, y: 0 }]);
+  });
+});
+
+describe("photoToGuide", () => {
+  const portrait = { width: 300, height: 400 };
+  test("an unframed photo's centre and top edge, on its guide", () => {
+    // Unframed, a portrait photo is contained in the guide: 0.75 wide, 1 tall.
+    expectPoints(
+      photoToGuide(
+        [
+          { x: 0.5, y: 0.5 },
+          { x: 0, y: 0 },
+        ],
+        portrait,
+        IDENTITY,
+      ),
+      [
+        { x: 0, y: 0 },
+        { x: -0.375, y: -0.5 },
+      ],
+    );
+  });
+  test("two lined-up photos put the same spot at the same guide point", () => {
+    const landscape = { width: 400, height: 300 };
+    const framing: Similarity = { tx: 0.1, ty: -0.05, rotation: 0.3, scale: 1.2 };
+    const other: Similarity = { tx: -0.2, ty: 0.15, rotation: -1.1, scale: 0.7 };
+    const spot: Point[] = [{ x: 0.3, y: 0.6 }];
+    const there = mapBetweenPhotos(spot, portrait, framing, landscape, other);
+    expectPoints(
+      photoToGuide(there, landscape, other),
+      photoToGuide(spot, portrait, framing),
+    );
   });
 });

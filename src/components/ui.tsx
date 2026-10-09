@@ -1,4 +1,4 @@
-import type { PropsWithChildren, ReactNode } from "react";
+import type { PropsWithChildren, ReactNode, RefObject } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -454,14 +454,25 @@ export function Notice({
     </View>
   );
 }
+/** What a screen can do with its page's scroll. */
+export type PageScroll = {
+  scrollTo: (options: { y: number; animated?: boolean }) => void;
+};
 /** Scrollable page body. Titles come from the navigator header. */
 export function Screen({
   children,
   fab,
-}: PropsWithChildren<{ fab?: ReactNode }>) {
+  scroller,
+}: PropsWithChildren<{
+  fab?: ReactNode;
+  /** For screens that scroll themselves, e.g. back to what's happening. */
+  scroller?: RefObject<PageScroll | null>;
+}>) {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <ScrollView
+        // Gesture handler's ScrollView forwards to the native one, which scrolls.
+        ref={scroller as never}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{
           paddingHorizontal: 16,

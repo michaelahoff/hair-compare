@@ -193,19 +193,27 @@ export async function deleteTreatment(owner: string, id: string) {
     if (result.error) throw result.error;
   }
 }
-export async function analyzePhoto(owner: string, photoId: string) {
+/**
+ * Assess a photo against an earlier one of its view: `previousId` when given,
+ * else the latest before it.
+ */
+export async function analyzePhoto(
+  owner: string,
+  { photoId, previousId }: { photoId: string; previousId?: string },
+) {
   if (DEV_ANALYSIS_URL) {
     // The dev server takes its inputs inline; resolve them from the journal.
     const journal = await readJournal(owner);
-    const { result, model, previousId } = await requestDevAnalysis(
+    const { result, model, previousId: comparedId } = await requestDevAnalysis(
       journal,
       photoId,
+      previousId,
     );
     const row: Analysis = {
       id: randomUUID(),
       user_id: owner,
       photo_id: photoId,
-      previous_photo_id: previousId,
+      previous_photo_id: comparedId,
       model,
       result,
       created_at: new Date().toISOString(),
@@ -223,7 +231,7 @@ export async function analyzePhoto(owner: string, photoId: string) {
   if (owner === "local")
     throw new Error("Sign in to a cloud account to request an AI assessment.");
   const { data, error } = await client().functions.invoke("analyze-photo", {
-    body: { photoId },
+    body: { photoId, previousId },
   });
   if (error) {
     const response = "context" in error ? (error.context as Response) : null;

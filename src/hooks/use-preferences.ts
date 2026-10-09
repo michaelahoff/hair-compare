@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ScalpView } from "@/lib/model";
+import { CLOSEUP_VIEWS, type GuideStyle } from "@/lib/guide-art";
 
 /** On-device choices that shape how photos are shown, kept across launches. */
 export type Preferences = {
@@ -11,7 +12,16 @@ export type Preferences = {
   lastView?: ScalpView;
   /** Quarter turns clockwise for each view's guide and its photos. */
   turns: Partial<Record<ScalpView, number>>;
+  /** Whether each view's photos line up against a whole head or a close-up of the whorl. */
+  guides?: Partial<Record<ScalpView, GuideStyle>>;
 };
+
+/** The guide picture a view's photos line up against. */
+export function guideStyleOf(preferences: Preferences, view: ScalpView) {
+  return CLOSEUP_VIEWS.includes(view)
+    ? (preferences.guides?.[view] ?? "head")
+    : "head";
+}
 
 const KEY = "hair-compare:preferences:v1";
 const DEFAULTS: Preferences = { pairs: {}, turns: {} };

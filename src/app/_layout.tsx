@@ -40,6 +40,7 @@ export default function Layout() {
             />
             <Stack.Screen name="photo/[id]" options={{ title: "" }} />
             <Stack.Screen name="line-up" options={{ title: "Line up" }} />
+            <Stack.Screen name="adjust" options={{ title: "Adjust pair" }} />
             <Stack.Screen name="treatment" options={{ title: "Treatment" }} />
             <Stack.Screen name="account" options={{ title: "Account" }} />
           </Stack>

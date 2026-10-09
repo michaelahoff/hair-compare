@@ -44,6 +44,27 @@ function journal(photos: Photo[], treatments: Treatment[] = []): Journal {
 }
 
 describe("previous photo", () => {
+  test("uses the chosen earlier photo when given one", () => {
+    const photos = [
+      photo("jan", "top", "2026-01-01T12:00:00.000Z"),
+      photo("mar", "top", "2026-03-01T12:00:00.000Z"),
+      photo("now", "top", "2026-04-01T12:00:00.000Z"),
+    ];
+    expect(assessmentInputs(journal(photos), "now", "jan").previous?.id).toBe(
+      "jan",
+    );
+  });
+
+  test("refuses a chosen photo that is later or of another view", () => {
+    const photos = [
+      photo("crown", "crown", "2026-01-01T12:00:00.000Z"),
+      photo("now", "top", "2026-04-01T12:00:00.000Z"),
+      photo("may", "top", "2026-05-01T12:00:00.000Z"),
+    ];
+    expect(() => assessmentInputs(journal(photos), "now", "crown")).toThrow();
+    expect(() => assessmentInputs(journal(photos), "now", "may")).toThrow();
+  });
+
   test("picks the latest earlier photo of the same view", () => {
     const current = photo("now", "top", "2026-04-01T12:00:00.000Z");
     const inputs = assessmentInputs(

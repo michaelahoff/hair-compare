@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { FramedPhoto } from "@/components/framed-photo";
+import { FramedThumb } from "@/components/framed-photo";
 import { colors, fonts } from "@/components/ui";
 import { VIEW_LABELS, elapsedDays, formatDate, type Photo } from "@/lib/model";
 
@@ -39,9 +39,14 @@ export function ProgressStrip({
       style={({ pressed }) => [styles.strip, { opacity: pressed ? 0.9 : 1 }]}
     >
       {[before, after].map((photo) => (
-        <View key={photo.id} style={styles.thumb}>
-          <FramedPhoto photo={photo} turn={turn} width={THUMB} height={THUMB + 10} />
-        </View>
+        <FramedThumb
+          key={photo.id}
+          photo={photo}
+          turn={turn}
+          width={THUMB}
+          height={THUMB + 10}
+          style={styles.thumb}
+        />
       )).reduce<ReactNode[]>((row, thumb, i) => {
         if (i === 0) return [thumb];
         return [
@@ -78,13 +83,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
   },
-  thumb: {
-    width: THUMB,
-    height: THUMB + 10,
-    borderRadius: 10,
-    overflow: "hidden",
-    backgroundColor: colors.line,
-  },
+  thumb: { borderRadius: 10 },
   middle: { flex: 1, alignItems: "center", gap: 6 },
   days: {
     fontFamily: fonts.mono,

@@ -1,7 +1,8 @@
 // Developer analysis server: the /analyze contract of the analyze-photo edge function,
-// with the model call made by a local provider chosen by flag. Development only.
+// with the model call made by a local provider chosen by flag, plus /match, which finds
+// the same spots in two photos for lining them up. Development only.
 //
-//   bun run dev:analysis -- --provider claude|codex|api [--port 8787] [--model <id>]
+//   bun run dev:analysis -- --provider claude|codex|api [--port 8787] [--model <id>] [--match-model <id>]
 import { appendFile, mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { networkInterfaces } from "node:os";
@@ -10,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AssessmentRequestSchema, ScalpAnalysisSchema, withOutlineBoxes } from "../../supabase/functions/_shared/analysis";
 import { assessmentParts } from "../../supabase/functions/_shared/assessment-prompt";
+import { PhotoMatchRequestSchema, PhotoMatchSchema, photoMatchParts } from "../../supabase/functions/_shared/photo-match";
 import type { Provider } from "./providers/types";
 
 const HOST = "127.0.0.1";
@@ -25,6 +27,7 @@ const ALLOWED_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 export type RequestLog = {
   provider: ProviderName;
+  route?: "/analyze" | "/match";
   model: string | null;
   latencyMs: number;
   status: "ok" | "invalid_schema" | "error";
@@ -41,6 +44,8 @@ export type ServerOptions = {
   provider: Provider;
   providerName: ProviderName;
   model?: string;
+  /** Model for /match; the provider's default when omitted. */
+  matchModel?: string;
   /** Serving the local network, so private-network origins are allowed too. */
   lan?: boolean;
   log: (entry: RequestLog) => Promise<void> | void;
@@ -84,6 +89,38 @@ export async function analyzeBody(text: string, provider: Provider, model: strin
   return { status: 200, body: { result: withOutlineBoxes(checked.data), model: output.model }, log: { status: "ok", model: output.model } };
 }
 
+/** Validates the body, asks the provider for matching points, and checks them against PhotoMatchSchema. */
+export async function matchBody(text: string, provider: Provider, model: string | undefined): Promise<Outcome> {
+  if (!provider.match) {
+    const error = "This provider can't match photos yet. Start the server with --provider claude or api.";
+    return { status: 501, body: { error }, log: { status: "error", model: model ?? null, error } };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return failure(400, "Request body must be JSON.", model);
+  }
+  const request = PhotoMatchRequestSchema.safeParse(json);
+  if (!request.success) return failure(400, `Invalid request: ${summarize(request.error.issues)}`, model);
+
+  let output: Awaited<ReturnType<Provider["analyze"]>>;
+  try {
+    output = await provider.match(photoMatchParts(request.data), { model });
+  } catch (error) {
+    const message = `Provider failed: ${describeError(error)}`;
+    return { status: 502, body: { error: message }, log: { status: "error", model: model ?? null, error: message } };
+  }
+  const checked = PhotoMatchSchema.safeParse(output.result);
+  if (!checked.success) {
+    const message = `Result did not match PhotoMatchSchema: ${summarize(checked.error.issues)}`;
+    return { status: 502, body: { error: message }, log: { status: "invalid_schema", model: output.model, error: message } };
+  }
+  return { status: 200, body: { result: checked.data, model: output.model }, log: { status: "ok", model: output.model } };
+}
+
+const ROUTES: Record<string, typeof analyzeBody | undefined> = { "/analyze": analyzeBody, "/match": matchBody };
+
 export function createAnalysisServer(options: ServerOptions): Server {
   return createServer(async (req, res) => {
     try {
@@ -98,7 +135,7 @@ export function createAnalysisServer(options: ServerOptions): Server {
 async function route(
   req: IncomingMessage,
   res: ServerResponse,
-  { provider, providerName, model, log, lan }: ServerOptions,
+  { provider, providerName, model, matchModel, log, lan }: ServerOptions,
 ): Promise<void> {
   const origin = req.headers.origin;
   if (origin !== undefined && !isAllowedOrigin(origin, lan))
@@ -120,14 +157,21 @@ async function route(
   }
   if (req.method === "GET" && pathname === "/health")
     return sendJson(res, 200, { ok: true, provider: providerName, model: model ?? null }, cors);
-  if (req.method !== "POST" || pathname !== "/analyze") return sendJson(res, 404, { error: "Not found" }, cors);
+  const handle = ROUTES[pathname];
+  if (req.method !== "POST" || !handle) return sendJson(res, 404, { error: "Not found" }, cors);
+  const routeModel = pathname === "/match" ? matchModel : model;
 
   const started = performance.now();
   const body = await readBody(req);
   const outcome = body.ok
-    ? await analyzeBody(body.text, provider, model)
-    : failure(body.status, body.error, model);
-  await log({ provider: providerName, latencyMs: Math.round(performance.now() - started), ...outcome.log });
+    ? await handle(body.text, provider, routeModel)
+    : failure(body.status, body.error, routeModel);
+  await log({
+    provider: providerName,
+    ...(pathname === "/match" ? { route: "/match" as const } : {}),
+    latencyMs: Math.round(performance.now() - started),
+    ...outcome.log,
+  });
   sendJson(res, outcome.status, outcome.body, outcome.status === 413 ? { ...cors, Connection: "close" } : cors);
 }
 
@@ -188,7 +232,7 @@ async function writeRequestLog(entry: RequestLog): Promise<void> {
     console.error("Could not write the dev server log", error instanceof Error ? error.name : "unknown"),
   );
   const detail = entry.error ? ` (${entry.error})` : "";
-  console.log(`analysis ${entry.status} ${entry.provider} ${entry.model ?? "-"} ${entry.latencyMs} ms${detail}`);
+  console.log(`${entry.route === "/match" ? "match" : "analysis"} ${entry.status} ${entry.provider} ${entry.model ?? "-"} ${entry.latencyMs} ms${detail}`);
 }
 
 async function main(): Promise<void> {
@@ -197,6 +241,7 @@ async function main(): Promise<void> {
       provider: { type: "string", default: "claude" },
       port: { type: "string", default: "8787" },
       model: { type: "string" },
+      "match-model": { type: "string" },
       lan: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
     },
@@ -204,7 +249,7 @@ async function main(): Promise<void> {
     allowPositionals: false,
   });
   if (values.help) {
-    console.log("Usage: bun run dev:analysis -- [--provider claude|codex|api] [--port 8787] [--model <id>] [--lan]");
+    console.log("Usage: bun run dev:analysis -- [--provider claude|codex|api] [--port 8787] [--model <id>] [--match-model <id>] [--lan]");
     return;
   }
   const providerName = PROVIDER_NAMES.find((name) => name === values.provider);
@@ -215,7 +260,14 @@ async function main(): Promise<void> {
   const provider = await createProvider(providerName);
   await mkdir(dirname(LOG_PATH), { recursive: true, mode: 0o700 });
   const lan = values.lan;
-  const server = createAnalysisServer({ provider, providerName, model: values.model, lan, log: writeRequestLog });
+  const server = createAnalysisServer({
+    provider,
+    providerName,
+    model: values.model,
+    matchModel: values["match-model"],
+    lan,
+    log: writeRequestLog,
+  });
   server.on("error", (error: NodeJS.ErrnoException) => {
     console.error(error.code === "EADDRINUSE" ? `Port ${port} is already in use; pass --port.` : `Could not listen: ${error.message}`);
     process.exitCode = 1;

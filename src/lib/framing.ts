@@ -12,7 +12,12 @@ import { IDENTITY, type Similarity } from "./alignment/transform";
 export type Framing = Similarity & {
   /** "auto" when matched from another lined-up photo. */
   source?: "manual" | "auto";
+  /** Features marked on the photo; pins with the same id mark the same spot. */
+  pins?: Pin[];
 };
+
+/** A feature marked on a photo, e.g. the whorl's centre, in photo fractions. */
+export type Pin = { id: string; name: string; x: number; y: number };
 
 /** Stored framing, ignoring legacy pair alignments (which carry `refPhotoId`). */
 export function framingOf(photo: { alignment: unknown }): Framing | null {

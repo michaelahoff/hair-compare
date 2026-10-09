@@ -68,6 +68,8 @@ Then set `EXPO_PUBLIC_ANALYSIS_URL=http://127.0.0.1:8787` in `.env` and restart 
 - `codex` runs `codex exec` on your `codex login`.
 - `api` uses `ANTHROPIC_API_KEY`, like the edge function.
 
+The server also answers `/match`, which asks the model for the same spots in two photos so the app can line them up. With the server set, Line up and Compare offer **AI match** when matching the photo details misses, and after a match you mark as not right (it can land confidently wrong when a head looks very different between photos). Photos are sent only when you tap it. `claude` and `api` support it, on Opus 5.5 by default (`--match-model` changes it); `codex` doesn't yet. Each match takes about 10 to 25 seconds. Compare's Analyze sends the pair you chose, so the after photo is assessed against that before photo.
+
 Subscription logins are for your own photos on your own machine only. Any build that reaches a tester, or a server that serves anyone else, must use an API key (see `docs/visual-change-spec.md` section 7). The server binds to 127.0.0.1, accepts browser requests only from localhost origins, and logs model, latency and schema status (never images or notes) to `.model-eval/dev-server.log`.
 
 ## Compare AI providers

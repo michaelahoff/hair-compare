@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Text, View, useWindowDimensions } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import {
   Button,
@@ -13,7 +20,8 @@ import {
   colors,
   s,
 } from "@/components/ui";
-import { ZoomableImage } from "@/components/zoom";
+import { ZoomFrame, ZoomableImage, useZoom } from "@/components/zoom";
+import { FramedPhoto, snapFeedback } from "@/components/framed-photo";
 import { JournalState } from "@/components/journal-state";
 import { AnalysisCard } from "@/components/analysis-card";
 import {
@@ -22,6 +30,8 @@ import {
   useJournalMutation,
 } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
+import { usePreferences } from "@/hooks/use-preferences";
+import { useLineUpState } from "@/hooks/use-auto-line-up";
 import { analyzePhoto, deletePhoto } from "@/lib/repository";
 import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
 import { framingOf } from "@/lib/framing";
@@ -30,7 +40,63 @@ import {
   VIEW_LABELS,
   errorMessage,
   formatDate,
+  type Photo,
 } from "@/lib/model";
+
+/**
+ * The photo as it sits on its view's guide, the way Compare shows it. While a
+ * new photo is being matched it shows as taken, then snaps into place.
+ */
+function LinedUpPhoto({
+  photo,
+  height,
+  matching,
+  onOriginal,
+}: {
+  photo: Photo;
+  height: number;
+  matching: boolean;
+  onOriginal: () => void;
+}) {
+  const zoom = useZoom();
+  const { preferences } = usePreferences();
+  return (
+    <ZoomFrame
+      zoom={zoom}
+      height={height}
+      style={{ borderRadius: 22 }}
+      overlay={
+        <View style={styles.tag}>
+          {matching ? (
+            <View style={styles.matching}>
+              <ActivityIndicator size="small" color="#FFF" />
+              <Text style={styles.tagText}>Lining up…</Text>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Show the original photo"
+              hitSlop={8}
+              onPress={onOriginal}
+            >
+              <Pill tone="dark">Lined up · Show original</Pill>
+            </Pressable>
+          )}
+        </View>
+      }
+    >
+      {(width) => (
+        <FramedPhoto
+          photo={photo}
+          turn={preferences.turns[photo.view] ?? 0}
+          width={width}
+          height={height}
+          unframed="contain"
+        />
+      )}
+    </ZoomFrame>
+  );
+}
 
 export default function PhotoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -47,6 +113,15 @@ export default function PhotoScreen() {
   const [confirm, setConfirm] = useState(false);
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
+  const [original, setOriginal] = useState(false);
+  const lineUp = useLineUpState(id);
+  const matching = lineUp === "queued" || lineUp === "matching";
+  // A tap as the photo lands, when that happens while it's on screen.
+  const wasMatching = useRef(matching);
+  useEffect(() => {
+    if (wasMatching.current && lineUp === "lined") snapFeedback();
+    wasMatching.current = matching;
+  }, [lineUp, matching]);
   async function destroy() {
     if (!photo) return;
     setError("");
@@ -60,7 +135,7 @@ export default function PhotoScreen() {
   async function assess() {
     setError("");
     try {
-      await analyze.mutateAsync(id);
+      await analyze.mutateAsync({ photoId: id });
       setConsent(false);
     } catch (e) {
       setError(errorMessage(e));
@@ -95,15 +170,45 @@ export default function PhotoScreen() {
       )}
       {photo && (
         <>
-          <ZoomableImage
-            uri={photo.uri}
-            height={Math.round(
-              Math.min(
-                ((Math.min(width, 560) - 32) * photo.height) / photo.width,
-                height * 0.62,
-              ),
-            )}
-          />
+          {(framingOf(photo) || matching) && !original ? (
+            <LinedUpPhoto
+              photo={photo}
+              matching={matching && !framingOf(photo)}
+              height={Math.round(
+                Math.min(Math.min(width, 560) - 32, height * 0.62),
+              )}
+              onOriginal={() => setOriginal(true)}
+            />
+          ) : (
+            <View>
+              <ZoomableImage
+                uri={photo.uri}
+                height={Math.round(
+                  Math.min(
+                    ((Math.min(width, 560) - 32) * photo.height) / photo.width,
+                    height * 0.62,
+                  ),
+                )}
+              />
+              {framingOf(photo) && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Show the photo lined up"
+                  hitSlop={8}
+                  onPress={() => setOriginal(false)}
+                  style={styles.tag}
+                >
+                  <Pill tone="dark">Original · Show lined up</Pill>
+                </Pressable>
+              )}
+            </View>
+          )}
+          {lineUp === "missed" && !framingOf(photo) && (
+            <Notice>
+              Couldn&apos;t line this photo up automatically. Use Line up to
+              place it on the guide.
+            </Notice>
+          )}
           {confirm && (
             <Card style={{ backgroundColor: colors.dangerSoft }}>
               <Text style={[s.body, { fontWeight: "600" }]}>
@@ -219,3 +324,17 @@ export default function PhotoScreen() {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  tag: { position: "absolute", top: 10, left: 10 },
+  matching: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    height: 28,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(15,26,23,0.72)",
+  },
+  tagText: { color: "#FFF", fontSize: 12, fontWeight: "700" },
+});

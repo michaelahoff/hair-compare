@@ -203,3 +203,38 @@ export function mapBetweenPhotos(
     return { x: u / toBox.width + 0.5, y: v / toBox.height + 0.5 };
   });
 }
+
+/**
+ * Photo fractions to guide units: centred on the guide square, side 1,
+ * before the view's turn. A region in guide units sits on the same spot of
+ * every photo of the view that is lined up.
+ */
+export function photoToGuide(
+  points: Point[],
+  photo: { width: number; height: number },
+  framing: Similarity,
+): Point[] {
+  const box = baseBox(photo);
+  return points.map((p) => {
+    const [x, y] = applySimilarity(
+      framing,
+      (p.x - 0.5) * box.width,
+      (p.y - 0.5) * box.height,
+    );
+    return { x, y };
+  });
+}
+
+/** Guide units back to photo fractions: the inverse of `photoToGuide`. */
+export function guideToPhoto(
+  points: Point[],
+  photo: { width: number; height: number },
+  framing: Similarity,
+): Point[] {
+  const box = baseBox(photo);
+  const inverse = invertSimilarity(framing);
+  return points.map((p) => {
+    const [x, y] = applySimilarity(inverse, p.x, p.y);
+    return { x: x / box.width + 0.5, y: y / box.height + 0.5 };
+  });
+}

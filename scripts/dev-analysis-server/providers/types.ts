@@ -1,9 +1,16 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { AssessmentPart } from "../../../supabase/functions/_shared/assessment-prompt";
 
+type Run = (parts: AssessmentPart[], options: { model?: string }) => Promise<{ result: unknown; model: string }>;
+
 export type Provider = {
-  analyze(parts: AssessmentPart[], options: { model?: string }): Promise<{ result: unknown; model: string }>;
+  analyze: Run;
+  /** Corresponding points between two photos; absent where the provider can't do it yet. */
+  match?: Run;
 };
+
+/** Photo matching needs precise pointing, so it runs on the default model unless overridden. */
+export const MATCH_MODEL = "claude-opus-5-5";
 
 /** The shared message parts as Anthropic Messages API content blocks. */
 export function anthropicContent(parts: AssessmentPart[]): Anthropic.ContentBlockParam[] {

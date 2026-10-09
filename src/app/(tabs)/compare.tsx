@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -11,6 +10,7 @@ import {
 import { router, useLocalSearchParams } from "expo-router";
 import { useJournal } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
+import { usePreferences } from "@/hooks/use-preferences";
 import {
   Button,
   Card,
@@ -18,11 +18,13 @@ import {
   Empty,
   Notice,
   Screen,
+  type PageScroll,
   SectionTitle,
   colors,
   s,
 } from "@/components/ui";
 import { JournalState } from "@/components/journal-state";
+import { FramedThumb } from "@/components/framed-photo";
 import { ComparisonViewer } from "@/components/comparison-viewer";
 import { AnalysisCard } from "@/components/analysis-card";
 import {
@@ -59,6 +61,7 @@ function PhotoStrip({
 }) {
   const scroller = useRef<ScrollView>(null);
   const [width, setWidth] = useState(0);
+  const { preferences } = usePreferences();
   // Keep the chosen photo in view, including after swiping the panes.
   useEffect(() => {
     if (!width) return;
@@ -101,11 +104,12 @@ function PhotoStrip({
               onPress={() => onChange(index)}
               style={{ width: THUMB, gap: 4 }}
             >
-              <Image
-                source={{ uri: photo.uri }}
+              <FramedThumb
+                photo={photo}
+                turn={preferences.turns[photo.view] ?? 0}
+                width={THUMB}
+                height={THUMB}
                 style={{
-                  width: THUMB,
-                  height: THUMB,
                   borderRadius: 14,
                   borderWidth: 3,
                   borderColor: on
@@ -189,6 +193,7 @@ function TreatmentSpan({
 
 export default function CompareScreen() {
   const journal = useJournal();
+  const page = useRef<PageScroll>(null);
   const { width, height } = useWindowDimensions();
   const paneHeight = Math.round(
     Math.max(200, Math.min(width - 32, (height - 330) / 2)),
@@ -224,9 +229,13 @@ export default function CompareScreen() {
         ? () => choose("after", afterIndex + 1)
         : undefined,
   };
-  const analysis = journal.data?.analyses
-    .filter((a) => a.photo_id === after?.id)
-    .at(-1);
+  // This pair's own analysis first, else the after photo's latest.
+  const afterAnalyses = (journal.data?.analyses ?? []).filter(
+    (a) => a.photo_id === after?.id,
+  );
+  const analysis =
+    afterAnalyses.filter((a) => a.previous_photo_id === before?.id).at(-1) ??
+    afterAnalyses.at(-1);
   const treatments = (journal.data?.treatments ?? []).filter(
     (t) =>
       before &&
@@ -245,7 +254,7 @@ export default function CompareScreen() {
         ].filter(Boolean)
       : [];
   return (
-    <Screen>
+    <Screen scroller={page}>
       <Chips
         selected={view}
         onChange={comparison.setView}
@@ -286,9 +295,11 @@ export default function CompareScreen() {
               photos={photos}
               paneHeight={paneHeight}
               analyses={journal.data?.analyses ?? []}
+              treatments={journal.data?.treatments ?? []}
               beforeSteps={beforeSteps}
               afterSteps={afterSteps}
               changeRequest={mode === "change" ? (at ?? "1") : undefined}
+              onWatch={() => page.current?.scrollTo({ y: 0, animated: true })}
             />
             {differences.length > 0 && (
               <Notice>Different {differences.join(" and ")}.</Notice>

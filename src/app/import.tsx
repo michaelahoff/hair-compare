@@ -26,6 +26,7 @@ import {
 import { DateField } from "@/components/date-field";
 import { ViewPicker } from "@/components/view-picker";
 import { useAccount } from "@/hooks/use-journal";
+import { useAutoLineUp } from "@/hooks/use-auto-line-up";
 import { takeImports } from "@/lib/capture-store";
 import {
   IMPORT_LIMIT,
@@ -134,6 +135,7 @@ export default function ImportScreen() {
   const launched = useRef(false);
   const { owner } = useAccount();
   const cache = useQueryClient();
+  const autoLineUp = useAutoLineUp();
 
   const add = useCallback(
     (photos: LibraryPhoto[], view: ScalpView) =>
@@ -193,10 +195,11 @@ export default function ImportScreen() {
     setError("");
     setRunning(true);
     let failed = 0;
+    const added: string[] = [];
     for (const item of queued) {
       patch(item.key, { status: "saving", error: undefined });
       try {
-        await addPhoto(owner, {
+        const id = await addPhoto(owner, {
           uri: item.uri,
           width: item.width,
           height: item.height,
@@ -206,6 +209,7 @@ export default function ImportScreen() {
           hair_wet: wet,
           notes: null,
         });
+        added.push(id);
         patch(item.key, { status: "saved" });
       } catch (e) {
         failed += 1;
@@ -214,6 +218,8 @@ export default function ImportScreen() {
     }
     // Refresh once rather than after every photo.
     await cache.invalidateQueries({ queryKey: ["journal", owner] });
+    // They snap onto the guide in the journal as each is matched.
+    void autoLineUp.lineUp(added);
     setRunning(false);
     if (!failed) {
       if (router.canGoBack()) router.back();
