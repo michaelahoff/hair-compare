@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { CLOSEUP_VIEWS, guideArt, inspectPoints } from "./guide-art";
+import { CLOSEUP_VIEWS, guideArt, guideCarry, inspectPoints } from "./guide-art";
+import { applySimilarity } from "./alignment/transform";
+import { compose } from "./framing";
 import { SCALP_VIEWS } from "./model";
 
 describe("guideArt", () => {
@@ -41,5 +43,24 @@ describe("inspectPoints", () => {
         expect(p.y).toBeGreaterThan(0);
         expect(p.y).toBeLessThan(100);
       }
+  });
+});
+
+describe("guideCarry", () => {
+  test("the close-up centres the whole head's whorl and back again", () => {
+    for (const [view, y] of [["top", 54], ["crown", 52]] as const) {
+      const into = guideCarry(view, "head", "closeup");
+      const [x, v] = applySimilarity(into, 0, y / 100 - 0.5);
+      expect(x).toBeCloseTo(0, 9);
+      expect(v).toBeCloseTo(0, 9);
+      const round = compose(guideCarry(view, "closeup", "head"), into);
+      expect(round.scale).toBeCloseTo(1, 9);
+      expect(round.tx).toBeCloseTo(0, 9);
+      expect(round.ty).toBeCloseTo(0, 9);
+    }
+  });
+
+  test("views without a close-up don't move", () => {
+    expect(guideCarry("hairline", "head", "closeup")).toEqual({ tx: 0, ty: 0, rotation: 0, scale: 1 });
   });
 });

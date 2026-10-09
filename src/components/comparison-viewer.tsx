@@ -238,7 +238,7 @@ export function ComparisonViewer({
 }) {
   const view = after.view;
   const { owner } = useAccount();
-  const { turn, style: guideStyle } = useViewGuide(view);
+  const { turn, variant: guideStyle } = useViewGuide(view);
   const [grid, setGrid] = useState(false);
   const [guide, setGuide] = useState(false);
   const [change, setChange] = useState(Boolean(changeRequest));
@@ -313,12 +313,14 @@ export function ComparisonViewer({
       setAiBusy(false);
     }
   }
-  /** Both photos together, moved as one or pinned feature to feature. */
+  /**
+   * Both photos together, moved as one or pinned feature to feature. The
+   * photo still to match follows the one already lined up; else the after
+   * photo follows the before.
+   */
   function adjust() {
-    router.push({
-      pathname: "/adjust",
-      params: { ref: before.id, id: after.id },
-    });
+    const [ref, id] = target ? [other, target] : [before, after];
+    router.push({ pathname: "/adjust", params: { ref: ref.id, id: id.id } });
   }
 
   // Step 2: analyse the after photo against this before photo.

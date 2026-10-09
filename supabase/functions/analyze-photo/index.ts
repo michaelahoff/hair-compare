@@ -111,9 +111,15 @@ async function handleRequest(req: Request): Promise<Response> {
     .from("photos")
     .select(PHOTO_COLUMNS)
     .eq("view", photo.view)
-    .eq("user_id", auth.user.id)
-    .lt("taken_at", photo.taken_at);
-  if (typeof previousId === "string") earlier = earlier.eq("id", previousId);
+    .eq("user_id", auth.user.id);
+  // A chosen photo may share the day: photos are dated by day, at noon.
+  earlier =
+    typeof previousId === "string"
+      ? earlier
+          .eq("id", previousId)
+          .neq("id", photo.id)
+          .lte("taken_at", photo.taken_at)
+      : earlier.lt("taken_at", photo.taken_at);
   const { data: previous, error: previousError } = await earlier
     .order("taken_at", { ascending: false })
     .limit(1)

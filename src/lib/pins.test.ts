@@ -88,7 +88,7 @@ describe("pinsFromMatch", () => {
 });
 
 describe("nextSpot", () => {
-  test("never repeats an id or a name after a spot is removed", () => {
+  test("never leaves two pins alike after a spot is removed", () => {
     const one = nextSpot([], "a");
     const two = nextSpot([one], "b");
     // Spot 1 removed: the next is Spot 3, not a second Spot 2.

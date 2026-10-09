@@ -13,7 +13,7 @@ import { AssessmentRequestSchema, ScalpAnalysisSchema, withOutlineBoxes } from "
 import { assessmentParts, type AssessmentPart } from "../../supabase/functions/_shared/assessment-prompt";
 import { PhotoMatchRequestSchema, PhotoMatchSchema, photoMatchParts } from "../../supabase/functions/_shared/photo-match";
 import type { z } from "zod";
-import type { Provider } from "./providers/types";
+import type { Provider, ProviderCall } from "./providers/types";
 
 const HOST = "127.0.0.1";
 /** Private network origins, allowed only with --lan (e.g. Expo web opened from another device). */
@@ -56,8 +56,6 @@ export function isAllowedOrigin(origin: string, lan = false): boolean {
   return ALLOWED_ORIGIN.test(origin) || (lan && PRIVATE_ORIGIN.test(origin));
 }
 
-type Call = Provider["analyze"];
-
 /**
  * One model request: parse the body against `request`, build the message
  * parts, run `call`, and check what comes back against `result`.
@@ -69,7 +67,7 @@ async function structuredBody<Req, Res>(
     request: z.ZodType<Req>;
     parts: (request: Req) => AssessmentPart[];
     /** Absent when the provider can't do this yet. */
-    call: Call | undefined;
+    call: ProviderCall | undefined;
     result: z.ZodType<Res>;
     /** The result schema's name, for errors. */
     name: string;
@@ -89,7 +87,7 @@ async function structuredBody<Req, Res>(
   const request = spec.request.safeParse(json);
   if (!request.success) return failure(400, `Invalid request: ${summarize(request.error.issues)}`, model);
 
-  let output: Awaited<ReturnType<Call>>;
+  let output: Awaited<ReturnType<ProviderCall>>;
   try {
     output = await spec.call(spec.parts(request.data), { model });
   } catch (error) {
@@ -116,7 +114,7 @@ export function analyzeBody(text: string, provider: Provider, model: string | un
         previous && { ...previous, data: previous.base64 },
         treatments,
       ),
-    call: (parts, options) => provider.analyze(parts, options),
+    call: provider.analyze,
     result: ScalpAnalysisSchema,
     name: "ScalpAnalysisSchema",
     finish: withOutlineBoxes,
@@ -125,11 +123,10 @@ export function analyzeBody(text: string, provider: Provider, model: string | un
 
 /** The same spots in two photos, validated against PhotoMatchSchema. */
 export function matchBody(text: string, provider: Provider, model: string | undefined): Promise<Outcome> {
-  const { match } = provider;
   return structuredBody(text, model, {
     request: PhotoMatchRequestSchema,
     parts: photoMatchParts,
-    call: match && ((parts, options) => match(parts, options)),
+    call: provider.match,
     result: PhotoMatchSchema,
     name: "PhotoMatchSchema",
   });

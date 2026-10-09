@@ -1,8 +1,11 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ScalpView } from "@/lib/model";
-import { CLOSEUP_VIEWS, type GuideStyle } from "@/lib/guide-art";
+import { useAccount } from "./use-journal";
+import { CLOSEUP_VIEWS, guideCarry, type GuideStyle } from "@/lib/guide-art";
+import { compose, framingOf } from "@/lib/framing";
+import { saveAlignment } from "@/lib/repository";
+import type { Journal, ScalpView } from "@/lib/model";
 
 /** On-device choices that shape how photos are shown, kept across launches. */
 export type Preferences = {
@@ -34,17 +37,43 @@ async function read(): Promise<Preferences> {
 /** How a view's guide is shown, and the controls that change it. */
 export function useViewGuide(view: ScalpView) {
   const { preferences, update } = usePreferences();
-  const turn = preferences.turns[view] ?? 0;
+  const { owner } = useAccount();
+  const cache = useQueryClient();
+  const variant = guideStyleOf(preferences, view);
+  /**
+   * Show the other picture, carrying every lined-up photo of the view onto it
+   * so they stay lined up, with each other and with photos placed later.
+   */
+  async function setVariant(next: GuideStyle) {
+    if (next === variant) return;
+    const carry = guideCarry(view, variant, next);
+    update((p) => ({ ...p, guides: { ...p.guides, [view]: next } }));
+    const key = ["journal", owner];
+    const photos = cache.getQueryData<Journal>(key)?.photos ?? [];
+    for (const photo of photos) {
+      const framing = framingOf(photo);
+      if (photo.view !== view || !framing) continue;
+      const alignment = { ...framing, ...compose(carry, framing) };
+      await saveAlignment(owner, photo.id, alignment);
+      cache.setQueryData<Journal>(key, (current) =>
+        current && {
+          ...current,
+          photos: current.photos.map((p) =>
+            p.id === photo.id ? { ...p, alignment } : p,
+          ),
+        },
+      );
+    }
+  }
   return {
-    turn,
-    style: guideStyleOf(preferences, view),
+    turn: preferences.turns[view] ?? 0,
+    variant,
     turnGuide: () =>
       update((p) => ({
         ...p,
-        turns: { ...p.turns, [view]: (turn + 1) % 4 },
+        turns: { ...p.turns, [view]: ((p.turns[view] ?? 0) + 1) % 4 },
       })),
-    setStyle: (style: GuideStyle) =>
-      update((p) => ({ ...p, guides: { ...p.guides, [view]: style } })),
+    setVariant,
   };
 }
 

@@ -26,6 +26,13 @@ export function framingOf(photo: { alignment: unknown }): Framing | null {
   return value;
 }
 
+/** A framing as text, to tell when a stored one has changed. */
+export function framingKey(framing: Similarity | null) {
+  return framing
+    ? `${framing.tx}:${framing.ty}:${framing.rotation}:${framing.scale}`
+    : "";
+}
+
 /** A photo's unframed size in guide units: contained in the unit square. */
 export function baseBox(photo: { width: number; height: number }) {
   const longest = Math.max(photo.width, photo.height);

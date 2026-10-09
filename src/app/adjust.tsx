@@ -105,7 +105,7 @@ function Adjust({ reference, photo }: { reference: Photo; photo: Photo }) {
   const moving: Side = earlier ? "after" : "before";
   const fixed: Side = moving === "after" ? "before" : "after";
   const { width, height } = useWindowDimensions();
-  const { turn, style: guide, turnGuide } = useViewGuide(view);
+  const { turn, variant: guide, turnGuide } = useViewGuide(view);
   const paneHeight = Math.round(
     Math.max(200, Math.min(Math.min(width, 560) - 32, (height - 420) / 2)),
   );
@@ -209,12 +209,16 @@ function Adjust({ reference, photo }: { reference: Photo; photo: Photo }) {
     setMessage("");
   }
   const save = useJournalMutation(async (owner: string) => {
-    for (const side of ["before", "after"] as const)
+    for (const side of ["before", "after"] as const) {
+      // A photo left where it was keeps how it got there; one moved here was
+      // placed by hand.
+      const kept = framingOf(shown[side]);
       await saveAlignment(owner, shown[side].id, {
         ...settledFraming(edits[side]),
-        source: "manual",
+        source: edits[side].touched.get() ? "manual" : (kept?.source ?? "auto"),
         pins: pins.map((p) => ({ id: p.id, name: p.name, ...p[side] })),
       });
+    }
   });
   async function persist() {
     setError("");

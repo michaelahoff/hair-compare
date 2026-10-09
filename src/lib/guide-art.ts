@@ -9,6 +9,11 @@
  *
  * Pure data with no React or Expo imports, so it runs under `bun test`.
  */
+import {
+  IDENTITY,
+  invertSimilarity,
+  type Similarity,
+} from "./alignment/transform";
 import type { ScalpArea, ScalpView } from "./model";
 
 /** A whole head, or a close-up of the whorl for photos that fill the frame with hair. */
@@ -301,6 +306,35 @@ const flipPoints = <T extends { x: number }>(points: T[]) =>
 
 /** The views a close-up of the whorl makes sense for. */
 export const CLOSEUP_VIEWS: readonly ScalpView[] = ["top", "crown"];
+
+/** How much closer the close-up picture is than the whole head. */
+export const CLOSEUP_ZOOM = 2.5;
+/** The whorl on each whole-head picture (0 to 100), which the close-up centres on. */
+const WHORL: Partial<Record<ScalpView, { x: number; y: number }>> = {
+  top: { x: 50, y: 54 },
+  crown: { x: 50, y: 52 },
+};
+
+/**
+ * How a framing moves from one of a view's pictures to the other. The close-up
+ * is the whole-head picture zoomed in on its whorl, so a photo lined up on
+ * either is lined up on both, and photos placed on each still line up.
+ */
+export function guideCarry(
+  view: ScalpView,
+  from: GuideStyle,
+  to: GuideStyle,
+): Similarity {
+  const whorl = WHORL[view];
+  if (from === to || !whorl) return IDENTITY;
+  const zoom: Similarity = {
+    scale: CLOSEUP_ZOOM,
+    rotation: 0,
+    tx: -CLOSEUP_ZOOM * (whorl.x / 100 - 0.5),
+    ty: -CLOSEUP_ZOOM * (whorl.y / 100 - 0.5),
+  };
+  return to === "closeup" ? zoom : invertSimilarity(zoom);
+}
 
 /** A view's picture: its head, or the close-up of the whorl that top and crown share. */
 export type GuideKey = ScalpView | "closeup";

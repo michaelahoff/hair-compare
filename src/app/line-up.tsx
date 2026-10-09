@@ -34,9 +34,15 @@ import { timelineOf } from "@/hooks/use-comparison";
 import { useAutoLineUp } from "@/hooks/use-auto-line-up";
 import { matchFraming, matchWithClaude, referenceFor } from "@/lib/match";
 import { saveAlignment } from "@/lib/repository";
-import { CLOSEUP_VIEWS, inspectPoints } from "@/lib/guide-art";
+import { CLOSEUP_VIEWS, guideCarry, inspectPoints } from "@/lib/guide-art";
 import { matchLines } from "@/lib/scan-script";
-import { IDENTITY, framingOf, type Framing } from "@/lib/framing";
+import {
+  IDENTITY,
+  compose,
+  framingKey,
+  framingOf,
+  type Framing,
+} from "@/lib/framing";
 import { VIEW_LABELS, errorMessage, formatDate, type Photo } from "@/lib/model";
 
 /** Line one photo up against its view's guide. */
@@ -75,7 +81,12 @@ type Phase = "matching" | "ai" | "matched" | "missed" | "choose" | "hand";
 function LineUp({ photo }: { photo: Photo }) {
   const id = photo.id;
   const journal = useJournal();
-  const { turn, style: guide, turnGuide, setStyle } = useViewGuide(photo.view);
+  const {
+    turn,
+    variant: guide,
+    turnGuide,
+    setVariant,
+  } = useViewGuide(photo.view);
   const { width, height } = useWindowDimensions();
   const edit = useFramingEdit(framingOf(photo));
   const timeline = timelineOf(journal.data?.photos ?? [], photo.view);
@@ -92,13 +103,36 @@ function LineUp({ photo }: { photo: Photo }) {
   const save = useJournalMutation((owner: string, framing: Framing) =>
     saveAlignment(owner, id, framing),
   );
+  // Saved elsewhere meanwhile, e.g. by pinning it on the pair screen: show
+  // that framing, so Save here can't put back the old one.
+  const stored = framingOf(photo);
+  const storedKey = framingKey(stored);
+  const [shownKey, setShownKey] = useState(storedKey);
+  if (shownKey !== storedKey) {
+    setShownKey(storedKey);
+    if (stored) setPhase("hand");
+  }
+  const seen = useRef(storedKey);
+  useEffect(() => {
+    if (seen.current === storedKey) return;
+    seen.current = storedKey;
+    if (!stored) return;
+    snapFraming(edit, stored);
+    edit.touched.set(false);
+  }, [storedKey, stored, edit]);
   const autoLineUp = useAutoLineUp();
   const unframed = timeline.filter((p) => p.id !== id && !framingOf(p)).length;
-  // Switching pictures changes what "lined up" means, so it's chosen before a
-  // view has lined-up photos: ones placed on each picture wouldn't line up.
-  const pickGuide =
-    CLOSEUP_VIEWS.includes(photo.view) &&
-    timeline.every((p) => p.id === id || !framingOf(p));
+  /**
+   * The other picture. The view's lined-up photos, this one included, are
+   * carried onto it, so this photo moves with it rather than snapping back.
+   */
+  function switchGuide() {
+    const next = guide === "closeup" ? "head" : "closeup";
+    const carry = guideCarry(photo.view, guide, next);
+    if (stored) seen.current = framingKey(compose(carry, stored));
+    snapFraming(edit, compose(carry, settledFraming(edit)));
+    setVariant(next).catch((e) => setError(errorMessage(e)));
+  }
   const size = Math.round(Math.min(Math.min(width, 560) - 32, height * 0.58));
   const scanning = phase === "matching" || phase === "ai";
   const date = reference ? formatDate(reference.taken_at) : null;
@@ -210,7 +244,7 @@ function LineUp({ photo }: { photo: Photo }) {
             )}
             {!scanning && (
               <View style={styles.corner}>
-                {pickGuide && (
+                {CLOSEUP_VIEWS.includes(photo.view) && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={
@@ -218,9 +252,7 @@ function LineUp({ photo }: { photo: Photo }) {
                         ? "Use the whole-head guide"
                         : "Use the close-up guide"
                     }
-                    onPress={() =>
-                      setStyle(guide === "closeup" ? "head" : "closeup")
-                    }
+                    onPress={switchGuide}
                     style={styles.chip}
                   >
                     <Text style={styles.chipText}>

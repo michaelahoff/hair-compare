@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { AssessmentPart } from "../../../supabase/functions/_shared/assessment-prompt";
 
 /** One structured request to the provider's model. */
-type ProviderCall = (parts: AssessmentPart[], options: { model?: string }) => Promise<{ result: unknown; model: string }>;
+export type ProviderCall = (parts: AssessmentPart[], options: { model?: string }) => Promise<{ result: unknown; model: string }>;
 
 export type Provider = {
   analyze: ProviderCall;

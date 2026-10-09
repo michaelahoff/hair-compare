@@ -55,6 +55,17 @@ describe("previous photo", () => {
     );
   });
 
+  test("takes a chosen photo from the same day", () => {
+    const photos = [
+      photo("first", "top", "2026-04-01T12:00:00.000Z"),
+      photo("retake", "top", "2026-04-01T12:00:00.000Z"),
+    ];
+    expect(assessmentInputs(journal(photos), "retake", "first").previous?.id).toBe(
+      "first",
+    );
+    expect(() => assessmentInputs(journal(photos), "retake", "retake")).toThrow();
+  });
+
   test("refuses a chosen photo that is later or of another view", () => {
     const photos = [
       photo("crown", "crown", "2026-01-01T12:00:00.000Z"),

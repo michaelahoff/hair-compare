@@ -27,8 +27,15 @@ export function assessmentInputs(
   const latestFirst = earlier.sort(
     (a, b) => Date.parse(b.taken_at) - Date.parse(a.taken_at),
   );
+  // A chosen photo may share the day: photos are dated by day, at noon.
   const previous = previousId
-    ? earlier.find((p) => p.id === previousId)
+    ? journal.photos.find(
+        (p) =>
+          p.id === previousId &&
+          p.id !== photoId &&
+          p.view === photo.view &&
+          Date.parse(p.taken_at) <= takenAt,
+      )
     : (latestFirst[0] ?? null);
   if (previous === undefined)
     throw new Error("Compare with an earlier photo of the same view.");
