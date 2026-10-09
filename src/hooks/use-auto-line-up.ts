@@ -2,11 +2,10 @@ import { useState, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { journalKey, useAccount } from "./use-journal";
 import { readJournal, saveAlignment } from "@/lib/repository";
-import { IDENTITY, framingOf, placedOn, type Framing } from "@/lib/framing";
+import { framingOf, keptAsTaken, type Framing } from "@/lib/framing";
 import type { GuideStyle } from "@/lib/guide-art";
 import { matchFraming, referenceFor } from "@/lib/match";
 import type { Journal, Photo } from "@/lib/model";
-import type { Similarity } from "@/lib/alignment";
 
 /**
  * Where a photo is in automatic line-up. A photo with nothing to match
@@ -150,17 +149,13 @@ export function useAutoLineUp() {
     if (!targets.length) return;
     if (!photos.some((p) => framingOf(p))) {
       const [anchor] = targets;
-      await store(owner, cache, anchor.id, {
-        ...IDENTITY,
-        source: "auto",
-        ...placedOn(anchor.view, variant),
-      });
+      await store(owner, cache, anchor.id, keptAsTaken(anchor.view, variant));
       targets.shift();
     }
     await lineUp(targets.map((p) => p.id));
   }
   /** Keep a framing found another way, e.g. by Claude, snapping it into place. */
-  async function place(id: string, framing: Similarity | Framing) {
+  async function place(id: string, framing: Framing) {
     await store(owner, cache, id, { ...framing, source: "auto" });
     setState(id, "lined");
   }

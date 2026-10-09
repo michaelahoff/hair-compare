@@ -47,6 +47,14 @@ export function framingOf(
   };
 }
 
+/**
+ * A photo kept as it was taken on `variant`, the picture shown: the anchor
+ * other photos line up to when nothing of its view is lined up yet.
+ */
+export function keptAsTaken(view: ScalpView, variant: GuideStyle): Framing {
+  return { ...IDENTITY, source: "auto", ...placedOn(view, variant) };
+}
+
 /** What to store with a framing placed on `variant`, so it reads back right. */
 export function placedOn(
   view: ScalpView,

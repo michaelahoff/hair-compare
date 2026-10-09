@@ -28,7 +28,7 @@ import {
 import { matchWithClaude } from "@/lib/match";
 import { analyzePhoto } from "@/lib/repository";
 import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
-import { IDENTITY, framingOf, placedOn } from "@/lib/framing";
+import { framingOf, keptAsTaken } from "@/lib/framing";
 import { inspectPoints, type GuideStyle } from "@/lib/guide-art";
 import { photoToGuide, regionPolygon } from "@/lib/outline";
 import {
@@ -304,13 +304,11 @@ export function ComparisonViewer({
     onWatch?.();
     try {
       // An unplaced photo stays as taken on the picture shown and anchors the
-      // match; it is matched from on the whole head, like every match.
+      // match. Claude's points give a whole-head framing, so the match reads
+      // the anchor there too.
       const kept = framingOf(other)
         ? other
-        : {
-            ...other,
-            alignment: { ...IDENTITY, ...placedOn(view, guideStyle) },
-          };
+        : { ...other, alignment: keptAsTaken(view, guideStyle) };
       if (kept !== other) await autoLineUp.place(other.id, kept.alignment!);
       const framing = await matchWithClaude(other, framingOf(kept)!, target);
       if (framing) {

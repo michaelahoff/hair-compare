@@ -36,7 +36,7 @@ import {
   type FramingEdit,
 } from "@/components/framed-photo";
 import { useJournal, useJournalMutation } from "@/hooks/use-journal";
-import { useViewGuide } from "@/hooks/use-preferences";
+import { usePreferences, useViewGuide } from "@/hooks/use-preferences";
 import { saveAlignment } from "@/lib/repository";
 import { requestDevMatch } from "@/lib/dev-analysis";
 import { POINT_TOLERANCE } from "@/lib/match";
@@ -70,6 +70,8 @@ export default function AdjustScreen() {
     id: string;
   }>();
   const journal = useJournal();
+  // The edits start on the view's picture, so wait until the choice is known.
+  const { ready } = usePreferences();
   const photos = journal.data?.photos ?? [];
   const reference = photos.find((p) => p.id === params.ref);
   const photo = photos.find((p) => p.id === params.id);
@@ -84,7 +86,7 @@ export default function AdjustScreen() {
       {(!reference || !photo) && !journal.isPending && !journal.error && (
         <Empty icon="photos" title="Photos not found" />
       )}
-      {reference && photo && (
+      {reference && photo && ready && (
         <Adjust
           key={`${reference.id}-${photo.id}`}
           reference={reference}
