@@ -1,5 +1,11 @@
 import { Tabs, router } from "expo-router";
-import { HeaderButtons, Icon, IconButton, colors } from "@/components/ui";
+import {
+  HeaderButtons,
+  Icon,
+  IconButton,
+  TAB_BAR_STYLE,
+  colors,
+} from "@/components/ui";
 
 export default function TabLayout() {
   return (
@@ -17,15 +23,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.muted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopWidth: 0,
-          shadowColor: colors.stage,
-          shadowOpacity: 0.08,
-          shadowRadius: 16,
-          shadowOffset: { width: 0, height: -4 },
-          elevation: 12,
-        },
+        tabBarStyle: TAB_BAR_STYLE,
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >

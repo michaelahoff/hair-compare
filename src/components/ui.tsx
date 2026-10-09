@@ -28,6 +28,16 @@ export const colors = {
   danger: "#B03A48",
   dangerSoft: "#FBEDEF",
 };
+/** The tab bar as the navigator styles it; prototypes restore it. */
+export const TAB_BAR_STYLE = {
+  backgroundColor: colors.surface,
+  borderTopWidth: 0,
+  shadowColor: colors.stage,
+  shadowOpacity: 0.08,
+  shadowRadius: 16,
+  shadowOffset: { width: 0, height: -4 },
+  elevation: 12,
+} as const;
 export type IconName =
   | "photos"
   | "compare"

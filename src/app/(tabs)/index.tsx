@@ -1,4 +1,9 @@
-import { useState } from "react";
+/**
+ * PROTOTYPE: three redesigns of this screen render here behind `?variant=`
+ * (a · Atlas, b · Darkroom, c · Ledger, d · Hybrid, current). `?demo=1` seeds sample
+ * data on web. See src/components/prototypes/photos-home/.
+ */
+import { useLayoutEffect, useState } from "react";
 import {
   Image,
   Pressable,
@@ -7,7 +12,22 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { PrototypeSwitcher } from "@/components/prototype-switcher";
+import { demoJournal } from "@/components/prototypes/photos-home/demo-data";
+import {
+  VariantAtlas,
+  atlas,
+} from "@/components/prototypes/photos-home/variant-atlas";
+import {
+  VariantDarkroom,
+  dark,
+} from "@/components/prototypes/photos-home/variant-darkroom";
+import {
+  VariantLedger,
+  ledger,
+} from "@/components/prototypes/photos-home/variant-ledger";
+import { VariantHybrid } from "@/components/prototypes/photos-home/variant-hybrid";
 import { useJournal } from "@/hooks/use-journal";
 import {
   Button,
@@ -18,6 +38,7 @@ import {
   Pill,
   Screen,
   SectionTitle,
+  TAB_BAR_STYLE,
   colors,
   s,
 } from "@/components/ui";
@@ -28,6 +49,7 @@ import {
   VIEW_LABELS,
   elapsedDays,
   formatDate,
+  type Journal,
   type Photo,
   type ScalpView,
 } from "@/lib/model";
@@ -96,12 +118,76 @@ function ProgressCard({ photos }: { photos: Photo[] }) {
   );
 }
 
+const VARIANTS = [
+  { key: "a", name: "Atlas · by region" },
+  { key: "b", name: "Darkroom · by recency" },
+  { key: "c", name: "Ledger · by day" },
+  { key: "d", name: "Hybrid · ledger + atlas" },
+  { key: "current", name: "Current design" },
+] as const;
+
 export default function PhotosScreen() {
+  const journal = useJournal();
+  const params = useLocalSearchParams<{ variant?: string; demo?: string }>();
+  const variant = VARIANTS.some((v) => v.key === params.variant)
+    ? params.variant!
+    : "d";
+  const empty = !journal.isPending && !journal.data?.photos.length;
+  const demo = params.demo ? params.demo === "1" : empty;
+  const navigation = useNavigation() as {
+    setOptions: (options: Record<string, unknown>) => void;
+  };
+  useLayoutEffect(() => {
+    const chrome = {
+      a: { bg: atlas.bg, bar: atlas.surface, on: atlas.copper, off: atlas.muted },
+      b: { bg: dark.bg, bar: dark.surface, on: dark.amber, off: dark.muted },
+      c: { bg: ledger.paper, bar: ledger.surface, on: ledger.moss, off: ledger.muted },
+      d: { bg: ledger.paper, bar: ledger.surface, on: ledger.moss, off: ledger.muted },
+    }[variant];
+    navigation.setOptions(
+      chrome
+        ? {
+            headerShown: false,
+            sceneStyle: { backgroundColor: chrome.bg },
+            tabBarStyle: { ...TAB_BAR_STYLE, backgroundColor: chrome.bar },
+            tabBarActiveTintColor: chrome.on,
+            tabBarInactiveTintColor: chrome.off,
+          }
+        : {
+            headerShown: true,
+            sceneStyle: { backgroundColor: colors.bg },
+            tabBarStyle: TAB_BAR_STYLE,
+            tabBarActiveTintColor: colors.accent,
+            tabBarInactiveTintColor: colors.muted,
+          },
+    );
+  }, [navigation, variant]);
+  const data = demo ? demoJournal() : journal.data;
+  return (
+    <View style={{ flex: 1 }}>
+      {variant === "current" ? (
+        <CurrentPhotos override={demo ? data : undefined} />
+      ) : !data ? null : variant === "a" ? (
+        <VariantAtlas journal={data} />
+      ) : variant === "b" ? (
+        <VariantDarkroom journal={data} />
+      ) : variant === "c" ? (
+        <VariantLedger journal={data} />
+      ) : (
+        <VariantHybrid journal={data} />
+      )}
+      <PrototypeSwitcher variants={VARIANTS} current={variant} demo={demo} />
+    </View>
+  );
+}
+
+/** The design as shipped, kept for comparison. */
+function CurrentPhotos({ override }: { override?: Journal }) {
   const journal = useJournal();
   const [view, setView] = useState<ScalpView | "all">("all");
   const { width } = useWindowDimensions();
   const tile = (Math.min(width, 560) - 32 - GAP * (COLUMNS - 1)) / COLUMNS;
-  const all = [...(journal.data?.photos ?? [])].sort((a, b) =>
+  const all = [...(override ?? journal.data)?.photos ?? []].sort((a, b) =>
     b.taken_at.localeCompare(a.taken_at),
   );
   const photos = all.filter((p) => view === "all" || p.view === view);
