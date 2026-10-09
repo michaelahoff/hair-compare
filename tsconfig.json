@@ -7,6 +7,10 @@
       "@/assets/*": ["./assets/*"]
     }
   },
-  "exclude": ["supabase/functions/analyze-photo", "**/*.test.ts"],
+  "exclude": [
+    "supabase/functions/analyze-photo",
+    "scripts/dev-analysis-server",
+    "**/*.test.ts"
+  ],
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }

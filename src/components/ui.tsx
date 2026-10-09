@@ -80,7 +80,8 @@ export type IconName =
   | "calendar"
   | "flip"
   | "turn"
-  | "ghost";
+  | "ghost"
+  | "change";
 const paths: Record<IconName, string> = {
   photos: "M4 4h16v16H4z M4 16l5-5 4 4 3-3 4 4 M15 8h.01",
   compare: "M4 3h16v8H4z M4 13h16v8H4z",
@@ -110,6 +111,7 @@ const paths: Record<IconName, string> = {
   turn: "M4 11h9v10H4z M9 7a8 8 0 0 1 11 4 M20 5v6h-6",
   ghost:
     "M6 20V10a6 6 0 0 1 12 0v10l-2-2-2 2-2-2-2 2-2-2z M10 10.5h.01 M14 10.5h.01",
+  change: "M4 17l5-5 4 4 7-7 M15 9h5v5",
 };
 export function Icon({
   name,

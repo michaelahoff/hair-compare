@@ -34,6 +34,9 @@ export type AlignResult = {
   score: number;
 };
 
+/** Below this edge correlation a registration is more likely wrong than right. */
+export const MIN_MATCH = 0.3;
+
 const ROTATION_STEP_DEG = 10;
 const SCALE_STEP = 1.15;
 const MIN_OVERLAP = 0.35;

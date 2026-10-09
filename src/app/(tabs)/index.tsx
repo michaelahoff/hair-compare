@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-na
 import { router } from "expo-router";
 import { useJournal } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
+import { useRegionTrends, type RegionTrend } from "@/hooks/use-region-trend";
 import {
   Button,
   Empty,
@@ -30,6 +31,7 @@ import {
   type Photo,
   type ScalpView,
 } from "@/lib/model";
+import { TREND_GLYPH, type Trend } from "@/lib/trend";
 
 function ago(date: string) {
   const days = elapsedDays(date);
@@ -37,6 +39,36 @@ function ago(date: string) {
   if (days === 1) return "yesterday";
   if (days < 60) return `${days} days ago`;
   return `${Math.round(days / 30)} months ago`;
+}
+
+/** How a known trend reads: legend colour and label, and the sentence's phrase. */
+const TREND: Record<
+  Exclude<Trend, "unknown">,
+  { color: string; label: string; phrase: string }
+> = {
+  gaining: {
+    color: colors.accent,
+    label: "more texture",
+    phrase: "more texture than in",
+  },
+  losing: {
+    color: colors.rust,
+    label: "less texture",
+    phrase: "less texture than in",
+  },
+  stable: {
+    color: colors.muted,
+    label: "texture about the same",
+    phrase: "about the same texture as in",
+  },
+};
+
+/** A photo's calendar day, read as local time so it doesn't slip a day. */
+function dayOf(photo: Photo, options: Intl.DateTimeFormatOptions) {
+  return new Date(`${photo.taken_at.slice(0, 10)}T12:00:00`).toLocaleDateString(
+    undefined,
+    options,
+  );
 }
 
 /**
@@ -50,6 +82,7 @@ export default function PhotosScreen() {
   const photos = journal.data?.photos ?? [];
   const comparison = useComparison(photos);
   const view = comparison.view;
+  const trends = useRegionTrends(photos, view);
   const latest = Object.fromEntries(
     SCALP_VIEWS.map((v) => [
       v,
@@ -80,6 +113,40 @@ export default function PhotosScreen() {
   ).length;
   const map = Math.min(168, (Math.min(width, 560) - 32 - 36) * 0.44);
   const ready = !journal.isPending && !journal.error && comparison.ready;
+
+  const trend: RegionTrend = trends[view];
+  const { since, latest: lastFramed } = trend;
+  const known = trend.trend !== "unknown" ? TREND[trend.trend] : null;
+  // The month alone reads ambiguously once the photos span two years.
+  const sameYear = since?.taken_at.slice(0, 4) === lastFramed?.taken_at.slice(0, 4);
+  const span =
+    known && trend.status === "ready" && since && lastFramed
+      ? {
+          since,
+          last: lastFramed,
+          sentence: `${VIEW_LABELS[view]}: ${known.phrase} ${dayOf(since, { month: "long", year: sameYear ? undefined : "numeric" })}. Based on ${trend.framed} photos.`,
+        }
+      : null;
+  const pending =
+    trend.status === "loading"
+      ? "Checking texture change…"
+      : trend.status === "none" && ordered.length >= 2
+        ? "Line up two or more photos to see a texture trend."
+        : trend.status === "ready" && !span
+          ? "Not enough closely matched photos for a texture trend."
+          : null;
+  // The AI's read of the latest photo sits beside the texture trend, never in place of it.
+  const lastPhoto = latest[view];
+  const aiRead =
+    lastPhoto &&
+    journal.data?.analyses
+      .filter((a) => a.photo_id === lastPhoto.id)
+      .at(-1)?.result.change_since_previous?.assessment;
+  const aiNote =
+    lastPhoto && (aiRead === "improved" || aiRead === "worse")
+      ? `The AI assessment on ${dayOf(lastPhoto, { month: "short", day: "numeric" })} read it as ${aiRead}.`
+      : null;
+
   return (
     <Screen>
       <JournalState
@@ -160,6 +227,30 @@ export default function PhotosScreen() {
                 />
               </View>
             </View>
+            {span || pending || aiNote ? (
+              <View style={styles.trendBlock}>
+                {span ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${span.sentence} Open texture change on Compare.`}
+                    onPress={() => {
+                      comparison.choose(view, span.since.id, span.last.id);
+                      router.navigate({
+                        pathname: "/compare",
+                        params: { mode: "change", at: String(Date.now()) },
+                      });
+                    }}
+                    style={styles.trendTap}
+                  >
+                    <Text style={styles.trendText}>{span.sentence}</Text>
+                    <Icon name="chevron" size={14} color={colors.muted} />
+                  </Pressable>
+                ) : (
+                  pending && <Text style={s.muted}>{pending}</Text>
+                )}
+                {aiNote && <Text style={s.muted}>{aiNote}</Text>}
+              </View>
+            ) : null}
             {overdue && (
               <Pressable
                 accessibilityRole="button"
@@ -176,21 +267,31 @@ export default function PhotosScreen() {
               </Pressable>
             )}
             <View style={styles.legend}>
-              {SCALP_VIEWS.map((v) => (
-                <Pressable
-                  key={v}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${VIEW_LABELS[v]}, ${FRESHNESS_LABEL[fresh[v]].toLowerCase()}`}
-                  accessibilityState={{ selected: v === view }}
-                  onPress={() => comparison.setView(v)}
-                  style={[styles.legendItem, v === view && styles.legendOn]}
-                >
-                  <View style={[styles.dot, { backgroundColor: FRESHNESS_COLOR[fresh[v]] }]} />
-                  <Text style={[styles.legendText, v === view && { color: colors.ink }]}>
-                    {VIEW_LABELS[v]}
-                  </Text>
-                </Pressable>
-              ))}
+              {SCALP_VIEWS.map((v) => {
+                const t = trends[v];
+                const shown =
+                  t.status === "ready" && t.trend !== "unknown" ? TREND[t.trend] : null;
+                return (
+                  <Pressable
+                    key={v}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${VIEW_LABELS[v]}, ${FRESHNESS_LABEL[fresh[v]].toLowerCase()}${shown ? `, ${shown.label}` : ""}`}
+                    accessibilityState={{ selected: v === view }}
+                    onPress={() => comparison.setView(v)}
+                    style={[styles.legendItem, v === view && styles.legendOn]}
+                  >
+                    <View style={[styles.dot, { backgroundColor: FRESHNESS_COLOR[fresh[v]] }]} />
+                    <Text style={[styles.legendText, v === view && { color: colors.ink }]}>
+                      {VIEW_LABELS[v]}
+                    </Text>
+                    {shown && (
+                      <Text style={[styles.trendGlyph, { color: shown.color }]}>
+                        {TREND_GLYPH[t.trend]}
+                      </Text>
+                    )}
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 
@@ -235,6 +336,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.subtle,
   },
+  trendBlock: { gap: 6 },
+  trendTap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    backgroundColor: colors.subtle,
+  },
+  trendText: { flex: 1, fontSize: 13, fontWeight: "600", lineHeight: 18, color: colors.ink },
+  trendGlyph: { fontSize: 11, fontWeight: "700" },
   nudgeText: { flex: 1, fontSize: 13, fontWeight: "600", color: colors.ink },
   legend: {
     flexDirection: "row",

@@ -24,6 +24,8 @@ Scan the Expo QR code on a device with a compatible Expo Go version, or use an E
 - Pinch to zoom up to 5× and drag either photo to move both together. Buttons also control zoom.
 - Line each photo up with its view's guide outline by dragging, pinching, twisting or using fine-tune buttons. The placement is saved with the photo, so every screen shows it lined up. Turn a view's guide to match which way the head faces.
 - Once one photo of a view is lined up by hand, match the others to it automatically. Rotation, translation and uniform scale are estimated from small edge maps; inspect results against the guide.
+- Turn on **Change** in Compare to tint the after photo where hair texture differs from the before photo: green for more, amber for less, with an opacity slider. Both photos must be lined up. It runs on the device, compares edge energy on the guide square, and is labelled as texture change, not hair growth; haircuts, wetness, lighting and loose framing all move it.
+- The Photos tab marks each region in the legend with its texture trend across lined-up photos (▲ more, ▼ less, – about the same) once the region has been selected, and links the sentence under it to Compare's Change mode.
 - Add, edit and delete treatments with dose/frequency, start/end dates and notes. Compare treatment dates with photo dates.
 - Delete photos with confirmation. JPEG re-encoding removes camera metadata before storage/upload. Saved JPEGs are capped at 1800 pixels on the longest side; library originals are untouched.
 
@@ -47,9 +49,26 @@ supabase functions deploy analyze-photo
 
 Do not disable JWT verification for deployment. The function also verifies the user through Supabase Auth, reads through the caller's RLS and explicitly scopes queries to that user.
 
-Cloud photos use private storage and temporary signed URLs. A requested assessment sends the current photo, the preceding photo of the same view, photo metadata/notes and relevant treatment history to Anthropic. The app explains this before sending. Results include photo quality, estimated Norwood stage (or indeterminate), confidence, approximate region boxes, hair-condition effects and an uncertainty-aware comparison. Open a photo to request assessment; compare photos to display region boxes.
+Cloud photos use private storage and temporary signed URLs. A requested assessment sends the current photo, the preceding photo of the same view, photo metadata/notes and relevant treatment history to Anthropic. The app explains this before sending. Results include photo quality, estimated Norwood stage (or indeterminate), confidence, approximate region outlines (prompt `scalp-v2`; each region's box is filled from its outline for older clients), hair-condition effects and an uncertainty-aware comparison. Open a photo to request assessment; compare photos to display region outlines. In Change mode, when both photos have an assessment, the after photo's outlines morph from the before photo's.
 
 An AI estimate is not a diagnosis or proof that a treatment caused a change. Before public release, add clinical validation, abuse/rate limits and provider privacy/retention review. The function has a request timeout and no automatic retries, but does not enforce per-user spending quotas.
+
+## Developer analysis server
+
+To iterate on the assessment without a Supabase project or API key, run the local server in `scripts/dev-analysis-server/`. It implements the edge function's prompt and result schema and picks a provider by flag:
+
+```sh
+(cd scripts/dev-analysis-server && npm ci)
+npm run dev:analysis -- --provider claude   # or codex, or api
+```
+
+Then set `EXPO_PUBLIC_ANALYSIS_URL=http://127.0.0.1:8787` in `.env` and restart Expo. Development builds send assessments for local and cloud journals to the server; production builds ignore the variable. Android emulators also need `adb reverse tcp:8787 tcp:8787`.
+
+- `claude` uses your Claude Code login through the Agent SDK (Haiku 5.5 by default; pass `--model` to change it). If it is not picked up, run `claude setup-token` and export `CLAUDE_CODE_OAUTH_TOKEN`.
+- `codex` runs `codex exec` on your `codex login`.
+- `api` uses `ANTHROPIC_API_KEY`, like the edge function.
+
+Subscription logins are for your own photos on your own machine only. Any build that reaches a tester, or a server that serves anyone else, must use an API key (see `docs/visual-change-spec.md` section 7). The server binds to 127.0.0.1, accepts browser requests only from localhost origins, and logs model, latency and schema status (never images or notes) to `.model-eval/dev-server.log`.
 
 ## Compare AI providers
 
@@ -67,6 +86,8 @@ See [the evaluation plan](docs/model-evaluation.md) for API-key setup, paid smok
 ```sh
 npm run lint
 npm run typecheck
+# The developer analysis server has its own dependencies and typecheck
+(cd scripts/dev-analysis-server && npm ci) && npx tsc --noEmit -p scripts/dev-analysis-server
 # Bun is only the unit-test runner, not the dependency manager.
 npm test
 deno check --config supabase/functions/deno.json supabase/functions/analyze-photo/index.ts
@@ -89,4 +110,7 @@ Run `npx eas-cli@latest build:configure`, choose your own iOS bundle identifier 
 - `src/lib/photos.ts`: JPEG preparation and working-image registration.
 - `src/lib/alignment/`: coarse-to-fine similarity registration.
 - `src/lib/framing.ts`: each photo's placement on its view's guide.
+- `src/lib/change-map.ts`, `src/hooks/use-change-map.ts`: the on-device texture change map and its in-memory cache; `src/lib/trend.ts` turns a region's maps into a trend.
+- `src/lib/outline.ts`, `src/components/region-outlines.tsx`: AI region outlines and their morph.
+- `scripts/dev-analysis-server/`: local analysis server for development.
 - `supabase/`: migrations, validated result schema and authenticated AI function.

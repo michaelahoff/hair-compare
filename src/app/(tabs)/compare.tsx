@@ -8,7 +8,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useJournal } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
 import {
@@ -194,6 +194,7 @@ export default function CompareScreen() {
     Math.max(200, Math.min(width - 32, (height - 330) / 2)),
   );
   const comparison = useComparison(journal.data?.photos ?? []);
+  const { mode, at } = useLocalSearchParams<{ mode?: string; at?: string }>();
   const { view } = comparison;
   const { ordered: photos, before, after } = comparison.pairOf(view);
   const afterIndex = photos.findIndex((p) => p.id === after?.id);
@@ -287,6 +288,7 @@ export default function CompareScreen() {
               analyses={journal.data?.analyses ?? []}
               beforeSteps={beforeSteps}
               afterSteps={afterSteps}
+              changeRequest={mode === "change" ? (at ?? "1") : undefined}
             />
             {differences.length > 0 && (
               <Notice>Different {differences.join(" and ")}.</Notice>

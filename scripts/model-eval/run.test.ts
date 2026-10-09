@@ -73,7 +73,7 @@ describe("dataset and review handling", () => {
     expect(() => CaseSchema.parse({ ...evalCase, current: { ...evalCase.current, taken_at: "2026-02-30T12:00:00.000Z" } })).toThrow();
   });
   test("rejects nonscalp reports with a confident stage and boxes beyond the image", () => {
-    const result = { ...validAnalysis, photo_quality: { usable: false, issues: [] }, norwood_stage: "3" as const, confidence: "high" as const, change_since_previous: { assessment: "no_previous" as const, explanation: "No baseline" }, regions: [{ area: "crown" as const, severity: "mild" as const, observation: "Visible", box: { x: 0.9, y: 0, width: 0.3, height: 0.2 } }] };
+    const result = { ...validAnalysis, photo_quality: { usable: false, issues: [] }, norwood_stage: "3" as const, confidence: "high" as const, change_since_previous: { assessment: "no_previous" as const, explanation: "No baseline" }, regions: [{ area: "crown" as const, severity: "mild" as const, observation: "Visible", box: { x: 0.9, y: 0, width: 0.3, height: 0.2 }, outline: null }] };
     const checks = checkAnalysis(evalCase, result);
     expect(checks.find((c) => c.name === "unusable_is_indeterminate")?.passed).toBe(false);
     expect(checks.find((c) => c.name === "boxes_within_image")?.passed).toBe(false);

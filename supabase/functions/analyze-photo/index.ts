@@ -9,8 +9,12 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { encodeBase64 } from "@std/encoding";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { ScalpAnalysisSchema } from "../_shared/analysis.ts";
-import { SYSTEM_PROMPT } from "../_shared/assessment-prompt.ts";
+import { ScalpAnalysisSchema, withOutlineBoxes } from "../_shared/analysis.ts";
+import {
+  assessmentParts,
+  type AssessmentPart,
+  SYSTEM_PROMPT,
+} from "../_shared/assessment-prompt.ts";
 
 const MODEL = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-5-5";
 const BUCKET = "scalp-photos";
@@ -124,30 +128,13 @@ async function handleRequest(req: Request): Promise<Response> {
       500,
     );
 
-  const content: Anthropic.ContentBlockParam[] = [];
-  if (previous) {
-    content.push({
-      type: "text",
-      text: `Previous photo — ${describePhoto(previous)}`,
-    });
-    content.push(await imageBlock(supabase, previous.storage_path));
-  }
-  content.push({
-    type: "text",
-    text: `Current photo — ${describePhoto(photo)}`,
-  });
-  content.push(await imageBlock(supabase, photo.storage_path));
-  const treatmentLines = (treatments ?? []).map(
-    (t) =>
-      `- ${t.name}${t.dosage ? ` (${t.dosage})` : ""}, started ${t.started_on}${t.ended_on ? `, ended ${t.ended_on}` : ""}`,
+  // Previous image first, as the shared prompt builder expects its parts in order.
+  const previousPhoto =
+    previous && { ...previous, data: await loadImage(supabase, previous.storage_path) };
+  const currentPhoto = { ...photo, data: await loadImage(supabase, photo.storage_path) };
+  const content = assessmentParts(currentPhoto, previousPhoto, treatments ?? []).map(
+    toContentBlock,
   );
-  content.push({
-    type: "text",
-    text:
-      (treatmentLines.length
-        ? `Treatments started on or before the current photo:\n${treatmentLines.join("\n")}\n\n`
-        : "No treatments recorded.\n\n") + "Assess the current photo.",
-  });
 
   const anthropic = new Anthropic({ apiKey, timeout: 90000, maxRetries: 0 });
   let response;
@@ -192,7 +179,8 @@ async function handleRequest(req: Request): Promise<Response> {
       user_id: auth.user.id,
       previous_photo_id: previous?.id ?? null,
       model: response.model,
-      result: response.parsed_output,
+      // Boxes follow the outline, so clients that only draw boxes keep working.
+      result: withOutlineBoxes(response.parsed_output),
     })
     .select()
     .single();
@@ -201,32 +189,20 @@ async function handleRequest(req: Request): Promise<Response> {
   return json(analysis, 200);
 }
 
-function describePhoto(p: PhotoRow): string {
-  const parts = [
-    `view: ${p.view.replace("_", " ")}`,
-    `taken ${p.taken_at.slice(0, 10)}`,
-  ];
-  if (p.hair_length) parts.push(`hair length: ${p.hair_length}`);
-  if (p.hair_wet) parts.push("hair wet");
-  if (p.notes) parts.push(`user note: ${p.notes}`);
-  return parts.join("; ");
+function toContentBlock(part: AssessmentPart): Anthropic.ContentBlockParam {
+  return part.type === "text"
+    ? { type: "text", text: part.text }
+    : {
+        type: "image",
+        source: { type: "base64", media_type: part.media_type, data: part.data },
+      };
 }
 
-async function imageBlock(
-  supabase: SupabaseClient,
-  path: string,
-): Promise<Anthropic.ImageBlockParam> {
+async function loadImage(supabase: SupabaseClient, path: string): Promise<string> {
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
   if (error || !data)
     throw new Error(`Could not read ${path}: ${error?.message}`);
-  return {
-    type: "image",
-    source: {
-      type: "base64",
-      media_type: "image/jpeg",
-      data: encodeBase64(await data.arrayBuffer()),
-    },
-  };
+  return encodeBase64(await data.arrayBuffer());
 }
 
 function json(body: unknown, status: number): Response {

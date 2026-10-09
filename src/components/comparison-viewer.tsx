@@ -1,5 +1,5 @@
-import { useRef, useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
   Button,
   Card,
@@ -12,6 +12,10 @@ import {
 } from "./ui";
 import { ZoomFrame, useZoom, type Zoom } from "./zoom";
 import { Guide } from "./guide";
+import { ChangeExplainer } from "./change-explainer";
+import { ChangeOverlay } from "./change-overlay";
+import { RegionOutlines, type OutlineFrom } from "./region-outlines";
+import { Slider } from "./slider";
 import {
   FineTune,
   FramedPhoto,
@@ -22,11 +26,13 @@ import {
   useFramingEdit,
   type FramingEdit,
 } from "./framed-photo";
+import { useChangeMap } from "@/hooks/use-change-map";
 import { useJournalMutation } from "@/hooks/use-journal";
 import { usePreferences } from "@/hooks/use-preferences";
 import { matchFraming, useAutoLineUp } from "@/hooks/use-auto-line-up";
 import { saveAlignment } from "@/lib/repository";
 import { IDENTITY, framingOf, type Framing } from "@/lib/framing";
+import { mapBetweenPhotos, regionPolygon } from "@/lib/outline";
 import {
   VIEW_LABELS,
   elapsedDays,
@@ -58,6 +64,14 @@ function Labels({ photo, label }: { photo: Photo; label: string }) {
   );
 }
 
+/** "Feb 14", with the year when the photos are in different years. */
+function changeDate(taken: string, withYear: boolean) {
+  return new Date(`${taken.slice(0, 10)}T12:00:00`).toLocaleDateString(
+    undefined,
+    { month: "short", day: "numeric", year: withYear ? "numeric" : undefined },
+  );
+}
+
 function PhotoPane({
   photo,
   turn,
@@ -66,6 +80,8 @@ function PhotoPane({
   regions,
   grid,
   guide,
+  overlay,
+  outlineFrom,
   height,
   label,
   steps,
@@ -77,6 +93,10 @@ function PhotoPane({
   regions: boolean;
   grid: boolean;
   guide: boolean;
+  /** Drawn over the photo inside the zoom, given the guide square's side. */
+  overlay?: (size: number) => ReactNode;
+  /** Earlier outlines in this photo's coordinates, for its regions to morph from. */
+  outlineFrom?: OutlineFrom[] | null;
   height: number;
   label: string;
   steps?: Steps;
@@ -130,33 +150,17 @@ function PhotoPane({
           >
             {(box) =>
               regions &&
-              analysis?.result.regions
-                .filter((r) => r.box !== null)
-                .map((region, index) => {
-                  const area = region.box!;
-                  return (
-                    <View
-                      pointerEvents="none"
-                      key={`${region.area}-${index}`}
-                      style={{
-                        position: "absolute",
-                        left: area.x * box.width,
-                        top: area.y * box.height,
-                        width: area.width * box.width,
-                        height: area.height * box.height,
-                        borderColor: colors.loupe,
-                        borderWidth: 2,
-                        backgroundColor: "#F2B5441A",
-                      }}
-                    >
-                      <Text style={styles.regionLabel}>
-                        {region.area.replaceAll("_", " ")}
-                      </Text>
-                    </View>
-                  );
-                })
+              analysis && (
+                <RegionOutlines
+                  regions={analysis.result.regions}
+                  box={box}
+                  from={outlineFrom}
+                  animationKey={`${analysis.id}:${outlineFrom ? "morph" : "fade"}`}
+                />
+              )
             }
           </FramedPhoto>
+          {overlay?.(Math.min(width, height))}
           {guide && (
             <Guide
               view={photo.view}
@@ -183,6 +187,7 @@ export function ComparisonViewer({
   analyses,
   beforeSteps,
   afterSteps,
+  changeRequest,
 }: {
   before: Photo;
   after: Photo;
@@ -192,12 +197,22 @@ export function ComparisonViewer({
   analyses: Analysis[];
   beforeSteps?: Steps;
   afterSteps?: Steps;
+  /** Changes whenever another screen asks to open in Change mode. */
+  changeRequest?: string;
 }) {
   const view = after.view;
   const { preferences, update } = usePreferences();
   const turn = preferences.turns[view] ?? 0;
   const [grid, setGrid] = useState(false);
   const [guide, setGuide] = useState(false);
+  const [change, setChange] = useState(Boolean(changeRequest));
+  const [shownRequest, setShownRequest] = useState(changeRequest);
+  if (changeRequest && changeRequest !== shownRequest) {
+    setShownRequest(changeRequest);
+    setChange(true);
+  }
+  const [opacity, setOpacity] = useState(0.8);
+  const [explain, setExplain] = useState(false);
   const [regions, setRegions] = useState(false);
   const [lining, setLining] = useState(false);
   const [active, setActive] = useState<Side>("after");
@@ -236,6 +251,34 @@ export function ComparisonViewer({
   const laterAnalysis = analyses.filter((a) => a.photo_id === after.id).at(-1);
   const unframed = photos.filter((p) => !framingOf(p)).length;
   const other: Side = active === "before" ? "after" : "before";
+  // Photos never wait on this: the overlay only joins once it is ready.
+  const changeShown = change && !lining;
+  const changeMap = useChangeMap(before, after, changeShown);
+  const changeReady =
+    changeShown && changeMap.status === "ready" ? changeMap.result : null;
+  // In Change mode the after photo's outlines grow out of the before photo's,
+  // carried across on both framings; without both assessments they fade in.
+  const outlineFrom = useMemo(() => {
+    const from = framingOf(before);
+    const to = framingOf(after);
+    if (!changeShown || !earlierAnalysis || !laterAnalysis || !from || !to)
+      return null;
+    return earlierAnalysis.result.regions.flatMap((region) => {
+      const points = regionPolygon(region);
+      return points
+        ? [
+            {
+              area: region.area,
+              points: mapBetweenPhotos(points, before, from, after, to),
+            },
+          ]
+        : [];
+    });
+  }, [changeShown, earlierAnalysis, laterAnalysis, before, after]);
+  const withYear = before.taken_at.slice(0, 4) !== after.taken_at.slice(0, 4);
+  const [fromDate, toDate] = [before, after].map((p) =>
+    changeDate(p.taken_at, withYear),
+  );
 
   function startLining() {
     loadFraming(edits.before, framingOf(before));
@@ -332,8 +375,21 @@ export function ComparisonViewer({
               zoom={zoom}
               analysis={side === "before" ? earlierAnalysis : laterAnalysis}
               regions={regions}
+              outlineFrom={side === "after" ? outlineFrom : null}
               grid={grid}
               guide={guide}
+              overlay={
+                side === "after" && changeReady
+                  ? (size) => (
+                      <ChangeOverlay
+                        map={changeReady.map}
+                        turn={turn}
+                        size={size}
+                        opacity={opacity}
+                      />
+                    )
+                  : undefined
+              }
               height={paneHeight}
               label={side === "before" ? "Before" : "After"}
               steps={side === "before" ? beforeSteps : afterSteps}
@@ -416,6 +472,12 @@ export function ComparisonViewer({
             active={guide}
             onPress={() => setGuide(!guide)}
           />
+          <IconButton
+            icon="change"
+            label="Change"
+            active={change}
+            onPress={() => setChange(!change)}
+          />
           {(earlierAnalysis || laterAnalysis) && (
             <IconButton
               icon="eye"
@@ -427,6 +489,45 @@ export function ComparisonViewer({
           <IconButton icon="move" label="Line up" onPress={startLining} />
         </Card>
       )}
+      {changeShown && (
+        <Card>
+          {changeMap.status === "unframed" ? (
+            <Text style={s.body}>Line up both photos to see change</Text>
+          ) : (
+            <>
+              <View style={s.row}>
+                <Text style={[s.body, styles.caption]}>
+                  {`Texture change, ${fromDate} → ${toDate}`}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={() => setExplain(true)}
+                >
+                  <Text style={styles.link}>What this is</Text>
+                </Pressable>
+              </View>
+              <Slider
+                value={opacity}
+                onChange={setOpacity}
+                label="Overlay opacity"
+              />
+              {changeMap.result?.reason && (
+                <Text style={s.muted}>{changeMap.result.reason}</Text>
+              )}
+              {changeMap.status === "loading" && (
+                <Text style={s.muted}>Comparing texture…</Text>
+              )}
+              {changeMap.error && (
+                <Text style={styles.error}>
+                  {errorMessage(changeMap.error)}
+                </Text>
+              )}
+            </>
+          )}
+        </Card>
+      )}
+      <ChangeExplainer visible={explain} onClose={() => setExplain(false)} />
       {Boolean(message) && <Notice>{message}</Notice>}
       {Boolean(error) && <Notice error>{error}</Notice>}
       {offer && unframed > 0 && (
@@ -470,13 +571,6 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#FFFFFF66",
   },
-  regionLabel: {
-    color: colors.ink,
-    backgroundColor: colors.loupe,
-    fontSize: 9,
-    paddingHorizontal: 3,
-    alignSelf: "flex-start",
-  },
   seam: {
     position: "absolute",
     alignSelf: "center",
@@ -500,4 +594,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
   },
+  caption: { flexShrink: 1, fontWeight: "600" },
+  link: { fontSize: 14, fontWeight: "600", color: colors.accent },
+  error: { fontSize: 14, lineHeight: 20, color: colors.danger },
 });

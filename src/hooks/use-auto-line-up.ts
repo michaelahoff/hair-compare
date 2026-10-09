@@ -5,10 +5,7 @@ import { alignPhotos } from "@/lib/photos";
 import { saveAlignment } from "@/lib/repository";
 import { chainFraming, framingOf } from "@/lib/framing";
 import type { Photo } from "@/lib/model";
-import type { Similarity } from "@/lib/alignment";
-
-/** Below this edge correlation a registration is more likely wrong than right. */
-export const MIN_MATCH = 0.3;
+import { MIN_MATCH, type Similarity } from "@/lib/alignment";
 
 /**
  * Frame `target` from an already-framed `reference` of the same view by

@@ -144,6 +144,7 @@ export function checkAnalysis(c: EvalCase, result: ScalpAnalysis): Check[] {
     { name: "baseline_consistency", passed: c.previous ? result.change_since_previous.assessment !== "no_previous" : result.change_since_previous.assessment === "no_previous" },
     { name: "unusable_is_indeterminate", passed: result.photo_quality.usable || result.norwood_stage === "indeterminate" },
     { name: "boxes_within_image", passed: result.regions.every(({ box }) => !box || (box.x + box.width <= 1.00001 && box.y + box.height <= 1.00001)) },
+    { name: "outlines_valid", passed: result.regions.every(({ outline }) => !outline || (outline.length >= 4 && outline.every(({ x, y }) => x >= 0 && x <= 1 && y >= 0 && y <= 1))) },
   ];
   const expected = c.expected;
   if (expected?.usable !== undefined) checks.push({ name: "expected_usable", passed: expected.usable === result.photo_quality.usable });

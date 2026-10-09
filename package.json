@@ -53,10 +53,11 @@
   "scripts": {
     "start": "expo start",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src/lib scripts/model-eval",
+    "test": "bun test src/lib scripts/model-eval scripts/dev-analysis-server",
     "eval:models": "bun run scripts/model-eval/cli.ts",
     "eval:fixtures": "bun run scripts/model-eval/create-smoke-fixtures.ts",
     "eval:score": "bun run scripts/model-eval/score-reviews.ts",
+    "dev:analysis": "bun run scripts/dev-analysis-server/server.ts",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",

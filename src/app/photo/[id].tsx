@@ -23,6 +23,7 @@ import {
 } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
 import { analyzePhoto, deletePhoto } from "@/lib/repository";
+import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
 import { framingOf } from "@/lib/framing";
 import {
   HAIR_LENGTHS,
@@ -168,7 +169,7 @@ export default function PhotoScreen() {
             </View>
           </Card>
           {consent &&
-            (owner === "local" ? (
+            (owner === "local" && !DEV_ANALYSIS_URL ? (
               <Card>
                 <Text style={s.body}>Analysis needs an account.</Text>
                 <View style={s.wrap}>
@@ -189,7 +190,10 @@ export default function PhotoScreen() {
               <Card>
                 <Text style={s.body}>
                   Sends this photo, the previous {VIEW_LABELS[photo.view]}{" "}
-                  photo, your notes and treatments to the AI provider.
+                  photo, your notes and treatments{" "}
+                  {DEV_ANALYSIS_URL
+                    ? `to the developer analysis server at ${DEV_ANALYSIS_URL}.`
+                    : "to the AI provider."}
                 </Text>
                 <View style={s.wrap}>
                   <Button

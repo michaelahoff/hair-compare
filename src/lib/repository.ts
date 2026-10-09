@@ -1,10 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { randomUUID } from "expo-crypto";
 import { supabase } from "./supabase";
+import { DEV_ANALYSIS_URL, requestDevAnalysis } from "./dev-analysis";
 import { keepPhoto, removePhotoFile } from "./local-files";
 import { preparePhoto } from "./photos";
 import {
   ScalpAnalysisSchema,
+  type Analysis,
   type Journal,
   type Photo,
   type PhotoInput,
@@ -192,6 +194,32 @@ export async function deleteTreatment(owner: string, id: string) {
   }
 }
 export async function analyzePhoto(owner: string, photoId: string) {
+  if (DEV_ANALYSIS_URL) {
+    // The dev server takes its inputs inline; resolve them from the journal.
+    const journal = await readJournal(owner);
+    const { result, model, previousId } = await requestDevAnalysis(
+      journal,
+      photoId,
+    );
+    const row: Analysis = {
+      id: randomUUID(),
+      user_id: owner,
+      photo_id: photoId,
+      previous_photo_id: previousId,
+      model,
+      result,
+      created_at: new Date().toISOString(),
+    };
+    if (owner === "local")
+      await updateLocal((j) => {
+        j.analyses.push(row);
+      });
+    else {
+      const inserted = await client().from("analyses").insert(row);
+      if (inserted.error) throw inserted.error;
+    }
+    return;
+  }
   if (owner === "local")
     throw new Error("Sign in to a cloud account to request an AI assessment.");
   const { data, error } = await client().functions.invoke("analyze-photo", {

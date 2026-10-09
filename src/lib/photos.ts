@@ -6,7 +6,10 @@ import {
   rgbaToGray,
   type AlignResult,
   type GrayImage,
+  type Similarity,
 } from "./alignment";
+import { warpImage } from "./alignment/image";
+import { IDENTITY, baseBox, compose } from "./framing";
 
 // Save a full-resolution display JPEG and a small working image for registration.
 // Re-encoding strips camera metadata (including GPS) from files we store/upload.
@@ -103,6 +106,49 @@ export async function grayCrop(
   });
   context.resize({ width: size });
   return readGray(context);
+}
+
+/** Longest side a photo is read at for guide-space work. */
+const GUIDE_SOURCE_MAX = 960;
+
+/**
+ * Render a photo onto its view's guide square, `size` pixels a side, as
+ * `framing` places it, and read it as greyscale. `mask` is 0 where the photo
+ * doesn't reach. The guide is unturned: both photos of a view share its
+ * turn, so it is applied only when drawing.
+ */
+export async function guideGray(
+  photo: { uri: string; width: number; height: number },
+  framing: Similarity,
+  size: number,
+): Promise<{ image: GrayImage; mask: Uint8Array }> {
+  const longest = Math.max(photo.width, photo.height);
+  // Enough pixels that the photo isn't upsampled where it covers the guide.
+  const target = Math.min(
+    longest,
+    GUIDE_SOURCE_MAX,
+    Math.ceil(size * Math.max(1, framing.scale)),
+  );
+  const context = ImageManipulator.manipulate(photo.uri);
+  context.resize(
+    photo.width >= photo.height ? { width: target } : { height: target },
+  );
+  const source = await readGray(context);
+  // Guide units → the photo's own width units: undo the framing, then the
+  // photo's base size on the guide (see `baseBox`).
+  const image = warpImage(
+    source,
+    compose(framing, { ...IDENTITY, scale: baseBox(photo).width }),
+    size,
+    size,
+    Number.NaN,
+  );
+  const mask = new Uint8Array(size * size);
+  for (let i = 0; i < mask.length; i++) {
+    if (Number.isNaN(image.data[i])) image.data[i] = 0;
+    else mask[i] = 1;
+  }
+  return { image, mask };
 }
 
 export async function alignPhotos(
