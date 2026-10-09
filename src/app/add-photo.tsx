@@ -15,6 +15,7 @@ import {
 import { DateField } from "@/components/date-field";
 import { ViewPicker } from "@/components/view-picker";
 import { useJournalMutation } from "@/hooks/use-journal";
+import { useAutoLineUp } from "@/hooks/use-auto-line-up";
 import { setImports, takeCapture } from "@/lib/capture-store";
 import { IMPORT_LIMIT, pickLibraryPhotos } from "@/lib/library";
 import { DATE_SOURCE_NOTES, type DateSource } from "@/lib/photo-date";
@@ -46,6 +47,7 @@ export default function AddPhotoScreen() {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const save = useJournalMutation(addPhoto);
+  const autoLineUp = useAutoLineUp();
   // A photo taken on the ghost camera arrives here when the form regains focus.
   useFocusEffect(
     useCallback(() => {
@@ -94,6 +96,8 @@ export default function AddPhotoScreen() {
         hair_wet: wet,
         notes: notes.trim() || null,
       });
+      // It snaps onto the guide on the photo screen once matched.
+      void autoLineUp.lineUp([id]);
       router.replace({ pathname: "/photo/[id]", params: { id } });
     } catch (e) {
       setError(errorMessage(e));

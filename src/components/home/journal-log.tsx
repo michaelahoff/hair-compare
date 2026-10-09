@@ -1,8 +1,10 @@
 import { Fragment } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
+import { FramedThumb } from "@/components/framed-photo";
 import { MonthHead, Rail } from "@/components/timeline";
 import { Icon, colors } from "@/components/ui";
+import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
 import {
   KIND_LABELS,
   VIEW_LABELS,
@@ -66,6 +68,9 @@ export function journalEntries(journal: Journal, today: string): Entry[] {
   );
 }
 
+const THUMB_WIDTH = 66;
+const THUMB_HEIGHT = 78;
+
 function monthOf(date: string) {
   return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
     month: "long",
@@ -84,6 +89,7 @@ export function JournalLog({
   journal: Journal;
   highlight?: ScalpView;
 }) {
+  const { preferences } = usePreferences();
   const today = localDate();
   const entries = journalEntries(journal, today);
   return (
@@ -151,10 +157,13 @@ export function JournalLog({
                             { transform: [{ scale: pressed ? 0.96 : 1 }] },
                           ]}
                         >
-                          <Image
-                            source={{ uri: photo.uri }}
+                          <FramedThumb
+                            photo={photo}
+                            turn={preferences.turns[photo.view] ?? 0}
+                            variant={guideStyleOf(preferences, photo.view)}
+                            width={THUMB_WIDTH}
+                            height={THUMB_HEIGHT}
                             style={[styles.thumb, on && styles.thumbOn]}
-                            resizeMode="cover"
                           />
                           <Text
                             numberOfLines={1}
@@ -243,8 +252,8 @@ const styles = StyleSheet.create({
   },
   todayButtonText: { color: "#FFF", fontSize: 13, fontWeight: "700" },
   thumbs: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  thumbWrap: { width: 66, gap: 4 },
-  thumb: { width: 66, height: 78, borderRadius: 10, backgroundColor: colors.stage },
+  thumbWrap: { width: THUMB_WIDTH, gap: 4 },
+  thumb: { borderRadius: 10 },
   thumbOn: { borderWidth: 2.5, borderColor: colors.accent },
   thumbLabel: {
     fontSize: 10,

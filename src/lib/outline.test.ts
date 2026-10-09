@@ -2,12 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { IDENTITY, type Similarity } from "./alignment/transform";
 import {
   centroid,
-  lerpPoints,
   mapBetweenPhotos,
   orientClockwise,
+  photoToGuide,
   regionPolygon,
   resample,
-  toPath,
   type Point,
 } from "./outline";
 
@@ -172,46 +171,6 @@ describe("centroid", () => {
   });
 });
 
-describe("toPath", () => {
-  test("writes a closed path in pixels", () => {
-    expect(
-      toPath(
-        [
-          { x: 0.5, y: 0 },
-          { x: 1, y: 0.5 },
-          { x: 0, y: 1 },
-        ],
-        100,
-        200,
-      ),
-    ).toBe("M50 0L100 100L0 200Z");
-  });
-  test("rounds to a tenth of a pixel", () => {
-    expect(toPath([{ x: 1 / 3, y: 0 }], 100, 100)).toBe("M33.3 0Z");
-  });
-});
-
-describe("lerpPoints", () => {
-  const a: Point[] = [
-    { x: 0, y: 0 },
-    { x: 1, y: 2 },
-  ];
-  const b: Point[] = [
-    { x: 4, y: 4 },
-    { x: 1, y: -2 },
-  ];
-  test("returns the first outline at t = 0 and the second at t = 1", () => {
-    expectPoints(lerpPoints(a, b, 0), a);
-    expectPoints(lerpPoints(a, b, 1), b);
-  });
-  test("moves each point a fraction of the way", () => {
-    expectPoints(lerpPoints(a, b, 0.25), [
-      { x: 1, y: 1 },
-      { x: 1, y: 1 },
-    ]);
-  });
-});
-
 describe("mapBetweenPhotos", () => {
   const portrait = { width: 300, height: 400 };
   const landscape = { width: 400, height: 300 };
@@ -254,5 +213,37 @@ describe("mapBetweenPhotos", () => {
       mapBetweenPhotos([p], portrait, IDENTITY, landscape, turnBack);
     expectPoints(onLandscape({ x: 0.2, y: 0.1 }), [{ x: 0.9, y: 0.2 }]);
     expectPoints(onLandscape({ x: 0, y: 0 }), [{ x: 1, y: 0 }]);
+  });
+});
+
+describe("photoToGuide", () => {
+  const portrait = { width: 300, height: 400 };
+  test("an unframed photo's centre and top edge, on its guide", () => {
+    // Unframed, a portrait photo is contained in the guide: 0.75 wide, 1 tall.
+    expectPoints(
+      photoToGuide(
+        [
+          { x: 0.5, y: 0.5 },
+          { x: 0, y: 0 },
+        ],
+        portrait,
+        IDENTITY,
+      ),
+      [
+        { x: 0, y: 0 },
+        { x: -0.375, y: -0.5 },
+      ],
+    );
+  });
+  test("two lined-up photos put the same spot at the same guide point", () => {
+    const landscape = { width: 400, height: 300 };
+    const framing: Similarity = { tx: 0.1, ty: -0.05, rotation: 0.3, scale: 1.2 };
+    const other: Similarity = { tx: -0.2, ty: 0.15, rotation: -1.1, scale: 0.7 };
+    const spot: Point[] = [{ x: 0.3, y: 0.6 }];
+    const there = mapBetweenPhotos(spot, portrait, framing, landscape, other);
+    expectPoints(
+      photoToGuide(there, landscape, other),
+      photoToGuide(spot, portrait, framing),
+    );
   });
 });

@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Server } from "node:http";
 import { ScalpAnalysisSchema } from "../../supabase/functions/_shared/analysis";
 import { SYSTEM_PROMPT, assessmentParts, type AssessmentPart } from "../../supabase/functions/_shared/assessment-prompt";
+import { PhotoMatchRequestSchema, PhotoMatchSchema, photoMatchParts } from "../../supabase/functions/_shared/photo-match";
 import { buildCodexPrompt } from "./providers/codex";
 import type { Provider } from "./providers/types";
-import { analyzeBody, createAnalysisServer, isAllowedOrigin, type RequestLog } from "./server";
+import { analyzeBody, createAnalysisServer, isAllowedOrigin, matchBody, type RequestLog } from "./server";
 
 const validResult = {
   photo_quality: { usable: true, issues: [] },
@@ -33,12 +34,28 @@ const body = {
   treatments: [{ name: "Secret treatment", dosage: "5%", started_on: "2026-08-01", ended_on: null }],
 };
 
-function fakeProvider(result: unknown = validResult, model = "fake-model") {
+const validMatch = {
+  same_area: true,
+  rotation_deg: 90,
+  points: [{ feature: "crown whorl", a: { x: 10, y: 20 }, b: { x: 30, y: 40 } }],
+};
+
+const matchRequest = {
+  view: "crown",
+  a: { base64: "REFERENCEIMAGE", media_type: "image/jpeg", width: 576, height: 768 },
+  b: { base64: "TARGETIMAGE", media_type: "image/jpeg", width: 768, height: 576 },
+};
+
+function fakeProvider(result: unknown = validResult, model = "fake-model", match: unknown = validMatch) {
   const calls: { parts: AssessmentPart[]; model?: string }[] = [];
   const provider: Provider = {
     async analyze(parts, options) {
       calls.push({ parts, model: options.model });
       return { result, model };
+    },
+    async match(parts, options) {
+      calls.push({ parts, model: options.model });
+      return { result: match, model };
     },
   };
   return { provider, calls };
@@ -138,6 +155,41 @@ describe("request validation", () => {
   });
 });
 
+describe("photo matching", () => {
+  test("sends both photos with their sizes to the provider and returns the validated points", async () => {
+    const { provider, calls } = fakeProvider();
+    const outcome = await matchBody(JSON.stringify(matchRequest), provider, "match-model");
+    expect(outcome.status).toBe(200);
+    expect(outcome.body).toEqual({ result: PhotoMatchSchema.parse(validMatch), model: "fake-model" });
+    expect(calls[0].model).toBe("match-model");
+    expect(calls[0].parts).toEqual(photoMatchParts(PhotoMatchRequestSchema.parse(matchRequest)));
+    expect(calls[0].parts[0]).toEqual({ type: "text", text: "Photo A, 576×768 px:" });
+    expect(calls[0].parts[2]).toEqual({ type: "text", text: "Photo B, 768×576 px:" });
+  });
+
+  test("rejects a request without sizes before it reaches the provider", async () => {
+    const { provider, calls } = fakeProvider();
+    const { width: _width, ...a } = matchRequest.a;
+    const outcome = await matchBody(JSON.stringify({ ...matchRequest, a }), provider, undefined);
+    expect(outcome.status).toBe(400);
+    expect(String((outcome.body as { error: string }).error)).toContain("a.width");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("points that fail PhotoMatchSchema are a 502 invalid_schema", async () => {
+    const { provider } = fakeProvider(validResult, "fake-model", { points: [{ a: [1, 2] }] });
+    const outcome = await matchBody(JSON.stringify(matchRequest), provider, undefined);
+    expect(outcome.status).toBe(502);
+    expect(outcome.log.status).toBe("invalid_schema");
+  });
+
+  test("a provider without matching answers 501", async () => {
+    const provider: Provider = { analyze: async () => ({ result: validResult, model: "m" }) };
+    const outcome = await matchBody(JSON.stringify(matchRequest), provider, undefined);
+    expect(outcome.status).toBe(501);
+  });
+});
+
 describe("HTTP server", () => {
   let server: Server;
   let base: string;
@@ -223,8 +275,22 @@ describe("HTTP server", () => {
     expect(res.status).toBe(413);
   });
 
+  test("/match is served and logged as a match without the images", async () => {
+    logs.length = 0;
+    const res = await fetch(`${base}/match`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost:8081" },
+      body: JSON.stringify(matchRequest),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { result: unknown }).result).toEqual(validMatch);
+    expect(logs).toEqual([{ provider: "claude", route: "/match", model: "fake-model", latencyMs: expect.any(Number), status: "ok" }]);
+    expect(JSON.stringify(logs)).not.toContain("IMAGE");
+  });
+
   test("other routes are 404", async () => {
     expect((await fetch(`${base}/analyze`)).status).toBe(404);
     expect((await fetch(`${base}/nothing`)).status).toBe(404);
+    expect((await fetch(`${base}/match`)).status).toBe(404);
   });
 });

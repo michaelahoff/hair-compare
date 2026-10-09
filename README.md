@@ -68,6 +68,8 @@ Then set `EXPO_PUBLIC_ANALYSIS_URL=http://127.0.0.1:8787` in `.env` and restart 
 - `codex` runs `codex exec` on your `codex login`.
 - `api` uses `ANTHROPIC_API_KEY`, like the edge function.
 
+The server also answers `/match`, which asks the model for the same spots in two photos so the app can line them up. With the server set, Line up and Compare offer **AI match** when matching the photo details misses, and after a match you mark as not right (it can land confidently wrong when a head looks very different between photos). Photos are sent only when you tap it. `claude` and `api` support it, on Opus 5.5 by default (`--match-model` changes it); `codex` doesn't yet. Each match takes about 10 to 25 seconds. Compare's Analyze sends the pair you chose, so the after photo is assessed against that before photo.
+
 Subscription logins are for your own photos on your own machine only. Any build that reaches a tester, or a server that serves anyone else, must use an API key (see `docs/visual-change-spec.md` section 7). The server binds to 127.0.0.1, accepts browser requests only from localhost origins, and logs model, latency and schema status (never images or notes) to `.model-eval/dev-server.log`.
 
 ## Compare AI providers
@@ -102,15 +104,20 @@ Run `npx eas-cli@latest build:configure`, choose your own iOS bundle identifier 
 
 ## Structure
 
-- `src/app/`: Expo Router screens.
-- `src/components/`: UI, assessment display and gesture comparison viewer.
+- `src/app/`: Expo Router screens. `line-up.tsx` lines one photo up (matching on open); `adjust.tsx` adjusts a compared pair together, with pins.
+- `src/components/`: UI, assessment display and gesture comparison viewer. `guide.tsx` draws each view's head picture; `scan.tsx` and `scan-outlines.tsx` are the scan, AI bubble and traced regions shown while matching and analysing; `pin-marker.tsx` is a draggable pin.
 - `src/components/home/`: the head map, progress strip and dated log on the Photos tab.
 - `src/hooks/use-journal.tsx`: session lifecycle and React Query hooks.
+- `src/hooks/use-auto-line-up.ts`: the queue that lines photos up in the background after uploads and in Compare.
 - `src/lib/repository.ts`: device/cloud data operations and private image access.
 - `src/lib/photos.ts`: JPEG preparation and working-image registration.
-- `src/lib/alignment/`: coarse-to-fine similarity registration.
-- `src/lib/framing.ts`: each photo's placement on its view's guide.
+- `src/lib/alignment/`: coarse-to-fine similarity registration, and similarity fits to matched points.
+- `src/lib/match.ts`: lining one photo up from another, on the device or by Claude's points, and choosing the photo to match from.
+- `src/lib/framing.ts`: each photo's placement on its view's guide, and its pins.
+- `src/lib/guide-art.ts`: each view's head picture, the spots a scan visits and the features worth pinning.
+- `src/lib/pins.ts`: fitting one photo to another by pinned features.
+- `src/lib/scan-script.ts`: what the AI bubble says while matching and analysing.
 - `src/lib/change-map.ts`, `src/hooks/use-change-map.ts`: the on-device texture change map and its in-memory cache; `src/lib/trend.ts` turns a region's maps into a trend.
-- `src/lib/outline.ts`, `src/components/region-outlines.tsx`: AI region outlines and their morph.
-- `scripts/dev-analysis-server/`: local analysis server for development.
+- `src/lib/outline.ts`: AI region outlines and mapping between photos and the guide.
+- `scripts/dev-analysis-server/`: local analysis and photo-matching server for development.
 - `supabase/`: migrations, validated result schema and authenticated AI function.

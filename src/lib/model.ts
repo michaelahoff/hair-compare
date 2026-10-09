@@ -1,11 +1,13 @@
 import type {
   HairLength,
   ScalpAnalysis,
+  ScalpArea,
   ScalpView,
+  Severity,
 } from "../../supabase/functions/_shared/analysis";
 import type { Framing } from "./framing";
 
-export type { HairLength, ScalpAnalysis, ScalpView };
+export type { HairLength, ScalpAnalysis, ScalpArea, ScalpView, Severity };
 export {
   HAIR_LENGTHS,
   SCALP_VIEWS,
@@ -146,6 +148,16 @@ export function movePair(
   }
   const after = Math.max(1, Math.min(count - 1, index));
   return { before: Math.min(pair.before, after - 1), after };
+}
+/**
+ * "Feb 14", or "Feb 14, 2026" with the year: a photo's calendar day, read as
+ * local time so it doesn't slip a day.
+ */
+export function shortDate(taken: string, withYear = false): string {
+  return new Date(`${taken.slice(0, 10)}T12:00:00`).toLocaleDateString(
+    undefined,
+    { month: "short", day: "numeric", year: withYear ? "numeric" : undefined },
+  );
 }
 export function elapsedDays(start: string, end = localDate()): number {
   const a = Date.parse(`${start.slice(0, 10)}T12:00:00Z`);

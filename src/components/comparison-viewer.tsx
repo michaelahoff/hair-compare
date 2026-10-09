@@ -1,53 +1,59 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
 import {
-  Button,
-  Card,
-  IconButton,
-  Notice,
-  Pill,
-  Segmented,
-  colors,
-  s,
-} from "./ui";
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { router } from "expo-router";
+import { Button, Card, Icon, IconButton, Notice, Pill, colors, s } from "./ui";
 import { ZoomFrame, useZoom, type Zoom } from "./zoom";
 import { Guide } from "./guide";
 import { ChangeExplainer } from "./change-explainer";
 import { ChangeOverlay } from "./change-overlay";
-import { RegionOutlines, type OutlineFrom } from "./region-outlines";
 import { Slider } from "./slider";
-import {
-  FineTune,
-  FramedPhoto,
-  FramingEditor,
-  loadFraming,
-  readFraming,
-  setFraming,
-  useFramingEdit,
-  type FramingEdit,
-} from "./framed-photo";
+import { FramedPhoto, snapFeedback } from "./framed-photo";
+import { AiBubble, ScanOverlay, useScanTour } from "./scan";
+import { ScanOutlines, type InspectShape } from "./scan-outlines";
+import { AI_MATCH, MatchChoices } from "./match-choices";
 import { useChangeMap } from "@/hooks/use-change-map";
-import { useJournalMutation } from "@/hooks/use-journal";
-import { usePreferences } from "@/hooks/use-preferences";
-import { matchFraming, useAutoLineUp } from "@/hooks/use-auto-line-up";
-import { saveAlignment } from "@/lib/repository";
-import { IDENTITY, framingOf, type Framing } from "@/lib/framing";
-import { mapBetweenPhotos, regionPolygon } from "@/lib/outline";
+import { useAccount, useJournalMutation } from "@/hooks/use-journal";
+import { useViewGuide } from "@/hooks/use-preferences";
+import {
+  isLiningUp,
+  useAutoLineUp,
+  useLineUpState,
+} from "@/hooks/use-auto-line-up";
+import { matchWithClaude } from "@/lib/match";
+import { analyzePhoto } from "@/lib/repository";
+import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
+import { framingOf, keptAsTaken } from "@/lib/framing";
+import { inspectPoints, type GuideStyle } from "@/lib/guide-art";
+import { photoToGuide, regionPolygon } from "@/lib/outline";
+import {
+  contextLines,
+  matchLines,
+  resultLines,
+  verdictText,
+  type BubbleLine,
+} from "@/lib/scan-script";
 import {
   VIEW_LABELS,
   elapsedDays,
   errorMessage,
   formatDate,
   photoMeta,
+  shortDate,
   type Analysis,
   type Photo,
+  type Treatment,
 } from "@/lib/model";
 
 const SEAM = 4;
 
 /** Callbacks for stepping one side of the pair; omitted at the timeline's ends. */
 export type Steps = { onOlder?: () => void; onNewer?: () => void };
-type Side = "before" | "after";
 
 function Labels({ photo, label }: { photo: Photo; label: string }) {
   return (
@@ -64,24 +70,14 @@ function Labels({ photo, label }: { photo: Photo; label: string }) {
   );
 }
 
-/** "Feb 14", with the year when the photos are in different years. */
-function changeDate(taken: string, withYear: boolean) {
-  return new Date(`${taken.slice(0, 10)}T12:00:00`).toLocaleDateString(
-    undefined,
-    { month: "short", day: "numeric", year: withYear ? "numeric" : undefined },
-  );
-}
-
 function PhotoPane({
   photo,
   turn,
   zoom,
-  analysis,
-  regions,
   grid,
-  guide,
+  variant,
+  showGuide,
   overlay,
-  outlineFrom,
   height,
   label,
   steps,
@@ -89,14 +85,13 @@ function PhotoPane({
   photo: Photo;
   turn: number;
   zoom: Zoom;
-  analysis?: Analysis;
-  regions: boolean;
   grid: boolean;
-  guide: boolean;
-  /** Drawn over the photo inside the zoom, given the guide square's side. */
-  overlay?: (size: number) => ReactNode;
-  /** Earlier outlines in this photo's coordinates, for its regions to morph from. */
-  outlineFrom?: OutlineFrom[] | null;
+  /** The view's guide picture, which the photo is shown on. */
+  variant: GuideStyle;
+  /** Draw that picture over the photo. */
+  showGuide: boolean;
+  /** Drawn over the photo inside the zoom, given the frame's size. */
+  overlay?: (width: number, height: number) => ReactNode;
   height: number;
   label: string;
   steps?: Steps;
@@ -144,28 +139,18 @@ function PhotoPane({
           <FramedPhoto
             photo={photo}
             turn={turn}
+            variant={variant}
             width={width}
             height={height}
             onError={() => setFailed(true)}
-          >
-            {(box) =>
-              regions &&
-              analysis && (
-                <RegionOutlines
-                  regions={analysis.result.regions}
-                  box={box}
-                  from={outlineFrom}
-                  animationKey={`${analysis.id}:${outlineFrom ? "morph" : "fade"}`}
-                />
-              )
-            }
-          </FramedPhoto>
-          {overlay?.(Math.min(width, height))}
-          {guide && (
+          />
+          {overlay?.(width, height)}
+          {showGuide && (
             <Guide
               view={photo.view}
               turn={turn}
               size={Math.min(width, height)}
+              variant={variant}
             />
           )}
         </View>
@@ -174,10 +159,60 @@ function PhotoPane({
   );
 }
 
+type Status = "done" | "working" | "attention" | "todo" | "locked";
+
+/** One step of comparing: a numbered badge showing how it stands, and its body. */
+function Step({
+  n,
+  title,
+  status,
+  children,
+}: {
+  n: number;
+  title: string;
+  status: Status;
+  children?: ReactNode;
+}) {
+  return (
+    <View style={styles.step}>
+      <View
+        style={[
+          styles.badge,
+          status === "done" && { backgroundColor: colors.accent },
+          status === "attention" && { backgroundColor: colors.rust },
+          status === "locked" && { opacity: 0.4 },
+        ]}
+      >
+        {status === "working" ? (
+          <ActivityIndicator size="small" color={colors.accent} />
+        ) : status === "done" ? (
+          <Icon name="check" size={16} color="#FFF" />
+        ) : (
+          <Text
+            style={[
+              styles.badgeText,
+              status === "attention" && { color: "#FFF" },
+            ]}
+          >
+            {status === "attention" ? "!" : n}
+          </Text>
+        )}
+      </View>
+      <View style={{ flex: 1, gap: 8 }}>
+        <Text style={[styles.stepTitle, status === "locked" && s.muted]}>
+          {title}
+        </Text>
+        {children}
+      </View>
+    </View>
+  );
+}
+
 /**
- * Before and after, each drawn on its view's guide so they line up. In
- * line-up mode both photos can be dragged, pinched and twisted onto the guide,
- * and the result is saved on each photo.
+ * Before and after, each drawn on its view's guide so they line up, and the
+ * two steps of comparing them: line them up (on its own, else by Claude or by
+ * hand), then analyse, with the scan, its commentary and what it found drawn
+ * over both photos.
  */
 export function ComparisonViewer({
   before,
@@ -185,24 +220,29 @@ export function ComparisonViewer({
   photos,
   paneHeight,
   analyses,
+  treatments,
   beforeSteps,
   afterSteps,
   changeRequest,
+  onWatch,
 }: {
   before: Photo;
   after: Photo;
-  /** Every photo of this view, for lining the rest up automatically. */
+  /** Every photo of this view, for lining up. */
   photos: Photo[];
   paneHeight: number;
   analyses: Analysis[];
+  treatments: Treatment[];
   beforeSteps?: Steps;
   afterSteps?: Steps;
   /** Changes whenever another screen asks to open in Change mode. */
   changeRequest?: string;
+  /** Bring the photos into view, as a scan over them starts. */
+  onWatch?: () => void;
 }) {
   const view = after.view;
-  const { preferences, update } = usePreferences();
-  const turn = preferences.turns[view] ?? 0;
+  const { owner } = useAccount();
+  const { turn, variant: guideStyle } = useViewGuide(view);
   const [grid, setGrid] = useState(false);
   const [guide, setGuide] = useState(false);
   const [change, setChange] = useState(Boolean(changeRequest));
@@ -213,283 +253,429 @@ export function ComparisonViewer({
   }
   const [opacity, setOpacity] = useState(0.8);
   const [explain, setExplain] = useState(false);
-  const [regions, setRegions] = useState(false);
-  const [lining, setLining] = useState(false);
-  const [active, setActive] = useState<Side>("after");
-  const [busy, setBusy] = useState(false);
-  const [offer, setOffer] = useState(false);
-  const [message, setMessage] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [triedAi, setTriedAi] = useState<string[]>([]);
+  const [replay, setReplay] = useState(0);
   const [error, setError] = useState("");
   // One zoom drives both panes so the same region is always in view.
   const zoom = useZoom();
-  const edits: Record<Side, FramingEdit> = {
-    before: useFramingEdit(),
-    after: useFramingEdit(),
-  };
-  const shown: Record<Side, Photo> = { before, after };
-  const save = useJournalMutation(
-    (owner: string, input: { id: string; framing: Framing }) =>
-      saveAlignment(owner, input.id, input.framing),
-  );
   const autoLineUp = useAutoLineUp();
-  // Edits belong to a pair; view settings and zoom carry across pairs.
+  const analyze = useJournalMutation(analyzePhoto);
+  const shown: Record<"before" | "after", Photo> = { before, after };
   const pair = `${before.id}-${after.id}`;
-  const currentPair = useRef(pair);
-  useEffect(() => {
-    currentPair.current = pair;
-  }, [pair]);
   const [shownPair, setShownPair] = useState(pair);
   if (shownPair !== pair) {
     setShownPair(pair);
-    setLining(false);
-    setMessage("");
     setError("");
   }
-  const earlierAnalysis = analyses
-    .filter((a) => a.photo_id === before.id)
-    .at(-1);
-  const laterAnalysis = analyses.filter((a) => a.photo_id === after.id).at(-1);
+
+  // Step 1: line the pair up, as soon as it's shown.
+  const states = {
+    before: useLineUpState(before.id),
+    after: useLineUpState(after.id),
+  };
+  const framed = Boolean(framingOf(before) && framingOf(after));
+  const target = !framingOf(after) ? after : !framingOf(before) ? before : null;
+  const other = target === after ? before : after;
+  const matching =
+    aiBusy ||
+    Object.values(states).some(isLiningUp);
+  const missed =
+    !framed &&
+    !matching &&
+    Boolean(target) &&
+    states[target === after ? "after" : "before"] === "missed";
   const unframed = photos.filter((p) => !framingOf(p)).length;
-  const other: Side = active === "before" ? "after" : "before";
-  // Photos never wait on this: the overlay only joins once it is ready.
-  const changeShown = change && !lining;
-  const changeMap = useChangeMap(before, after, changeShown);
+  const { pairUp } = autoLineUp;
+  const started = useRef<string | null>(null);
+  useEffect(() => {
+    if (started.current === pair) return;
+    started.current = pair;
+    pairUp([before, after], photos, guideStyle).catch((e) =>
+      setError(errorMessage(e)),
+    );
+  }, [pair, before, after, photos, pairUp, guideStyle]);
+
+  async function aiMatch() {
+    if (!target) return;
+    setAiBusy(true);
+    setError("");
+    setTriedAi((ids) => [...ids, target.id]);
+    onWatch?.();
+    try {
+      // An unplaced photo stays as taken on the picture shown and anchors the
+      // match. Claude's points give a whole-head framing, so the match reads
+      // the anchor there too.
+      const kept = framingOf(other)
+        ? other
+        : { ...other, alignment: keptAsTaken(view, guideStyle) };
+      if (kept !== other) await autoLineUp.place(other.id, kept.alignment!);
+      const framing = await matchWithClaude(other, framingOf(kept)!, target);
+      if (framing) {
+        await autoLineUp.place(target.id, framing);
+        snapFeedback();
+      } else
+        setError(
+          "Claude couldn't find enough of the same spots in both photos. Line it up by hand.",
+        );
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setAiBusy(false);
+    }
+  }
+  /**
+   * Both photos together, moved as one or pinned feature to feature. The
+   * photo still to match follows the one already lined up; else the after
+   * photo follows the before.
+   */
+  function adjust() {
+    const [fixed, moving] = target ? [other, target] : [before, after];
+    router.push({
+      pathname: "/adjust",
+      params: { ref: fixed.id, id: moving.id },
+    });
+  }
+
+  // Step 2: analyse the after photo against this before photo.
+  const pairAnalysis = analyses
+    .filter((a) => a.photo_id === after.id && a.previous_photo_id === before.id)
+    .at(-1);
+  const canAnalyze = owner !== "local" || Boolean(DEV_ANALYSIS_URL);
+  const analyzing = analyze.isPending;
+  const changeMap = useChangeMap(
+    before,
+    after,
+    guideStyle,
+    (change || analyzing) && framed,
+  );
   const changeReady =
-    changeShown && changeMap.status === "ready" ? changeMap.result : null;
-  // In Change mode the after photo's outlines grow out of the before photo's,
-  // carried across on both framings; without both assessments they fade in.
-  const outlineFrom = useMemo(() => {
-    const from = framingOf(before);
-    const to = framingOf(after);
-    if (!changeShown || !earlierAnalysis || !laterAnalysis || !from || !to)
-      return null;
-    return earlierAnalysis.result.regions.flatMap((region) => {
-      const points = regionPolygon(region);
-      return points
+    change && changeMap.status === "ready" ? changeMap.result : null;
+  async function runAnalysis() {
+    setError("");
+    onWatch?.();
+    try {
+      await analyze.mutateAsync({ photoId: after.id, previousId: before.id });
+      snapFeedback();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  // What the AI bubble says, and where the scanner looks.
+  const mode = matching
+    ? "match"
+    : analyzing
+      ? "analyze"
+      : pairAnalysis && framed
+        ? "result"
+        : null;
+  const texture = changeMap.result?.map;
+  const lines: BubbleLine[] = useMemo(() => {
+    if (mode === "match")
+      return matchLines(
+        view,
+        guideStyle,
+        formatDate(other.taken_at),
+        aiBusy,
+      ).map((text) => ({ text }));
+    if (mode === "analyze")
+      return contextLines({ before, after, treatments, texture });
+    if (mode === "result" && pairAnalysis)
+      return resultLines(pairAnalysis.result);
+    return [];
+  }, [
+    mode,
+    view,
+    guideStyle,
+    other,
+    aiBusy,
+    before,
+    after,
+    treatments,
+    texture,
+    pairAnalysis,
+  ]);
+  const { scanner, ...speech } = useScanTour(lines, {
+    scanning: mode === "match" || mode === "analyze",
+    speaking: Boolean(mode),
+    points: inspectPoints(view, guideStyle),
+    everyMs: mode === "result" ? 4600 : 2400,
+    loop: mode !== "result",
+    restart: replay,
+  });
+
+  // What the analysis inspected, on the guide, so it lands on both photos.
+  const shapes: InspectShape[] = useMemo(() => {
+    const framing = framingOf(after, guideStyle);
+    if (!pairAnalysis || !framing) return [];
+    return pairAnalysis.result.regions.flatMap((region, i) => {
+      const polygon = regionPolygon(region);
+      return polygon
         ? [
             {
+              key: `${region.area}-${i}`,
               area: region.area,
-              points: mapBetweenPhotos(points, before, from, after, to),
+              severity: region.severity,
+              points: photoToGuide(polygon, after, framing),
             },
           ]
         : [];
     });
-  }, [changeShown, earlierAnalysis, laterAnalysis, before, after]);
+  }, [pairAnalysis, after, guideStyle]);
+  // Once the findings have been read out, the bubble tucks away to a button.
+  const reading = pairAnalysis ? `${pairAnalysis.id}:${replay}` : "";
+  const [heard, setHeard] = useState("");
+  const onLast = mode === "result" && speech.index === lines.length - 1;
+  useEffect(() => {
+    if (!onLast) return;
+    const timer = setTimeout(() => setHeard(reading), 6000);
+    return () => clearTimeout(timer);
+  }, [onLast, reading]);
+  const quiet = mode === "result" && heard === reading;
+  const focus =
+    mode === "result" && !quiet ? (speech.line?.area ?? null) : null;
+
   const withYear = before.taken_at.slice(0, 4) !== after.taken_at.slice(0, 4);
   const [fromDate, toDate] = [before, after].map((p) =>
-    changeDate(p.taken_at, withYear),
+    shortDate(p.taken_at, withYear),
   );
-
-  function startLining() {
-    loadFraming(edits.before, framingOf(before));
-    loadFraming(edits.after, framingOf(after));
-    setMessage("");
-    setError("");
-    setLining(true);
-  }
-  async function match() {
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      const framing = await matchFraming(
-        shown[other],
-        readFraming(edits[other]),
-        shown[active],
-      );
-      if (currentPair.current !== pair) return;
-      if (!framing)
-        setMessage("Couldn't match the details. Line this one up by hand.");
-      else {
-        setFraming(edits[active], framing);
-        setMessage(
-          `Matched to the ${other} photo. Check it against the guide.`,
-        );
-      }
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function persist() {
-    setError("");
-    try {
-      for (const side of ["before", "after"] as const)
-        if (edits[side].touched.get())
-          await save.mutateAsync({
-            id: shown[side].id,
-            framing: { ...readFraming(edits[side]), source: "manual" },
-          });
-      setLining(false);
-      setOffer(true);
-      setMessage("Saved. These photos will open lined up from now on.");
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }
-  async function lineUpRest() {
-    setError("");
-    setMessage("");
-    try {
-      const { lined, missed } = await autoLineUp.run(photos);
-      setOffer(false);
-      setMessage(
-        missed
-          ? `Lined up ${lined}. ${missed} couldn't be matched, so line ${missed === 1 ? "it" : "those"} up by hand.`
-          : `Lined up ${lined} ${lined === 1 ? "photo" : "photos"}. Swipe through to check them.`,
-      );
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }
-  function turnGuide() {
-    update((p) => ({ ...p, turns: { ...p.turns, [view]: (turn + 1) % 4 } }));
-  }
+  const verdict = pairAnalysis?.result.change_since_previous.assessment;
 
   return (
     <View style={{ gap: 12 }}>
       <View style={[s.stage, { gap: SEAM }]}>
-        {(["before", "after"] as const).map((side) =>
-          lining ? (
-            <FramingEditor
-              key={side}
-              photo={shown[side]}
-              edit={edits[side]}
-              turn={turn}
-              height={paneHeight}
-              active={active === side}
-              onActivate={() => setActive(side)}
-              overlay={
-                <Labels
-                  photo={shown[side]}
-                  label={side === "before" ? "Before" : "After"}
-                />
-              }
-            />
-          ) : (
-            <PhotoPane
-              key={side}
-              photo={shown[side]}
-              turn={turn}
-              zoom={zoom}
-              analysis={side === "before" ? earlierAnalysis : laterAnalysis}
-              regions={regions}
-              outlineFrom={side === "after" ? outlineFrom : null}
-              grid={grid}
-              guide={guide}
-              overlay={
-                side === "after" && changeReady
-                  ? (size) => (
-                      <ChangeOverlay
-                        map={changeReady.map}
-                        turn={turn}
-                        size={size}
-                        opacity={opacity}
-                      />
-                    )
+        {(["before", "after"] as const).map((side) => (
+          <PhotoPane
+            key={side}
+            photo={shown[side]}
+            turn={turn}
+            zoom={zoom}
+            grid={grid}
+            variant={guideStyle}
+            showGuide={guide}
+            overlay={(width, height) => (
+              <>
+                {side === "after" && changeReady && (
+                  <ChangeOverlay
+                    map={changeReady.map}
+                    turn={turn}
+                    size={Math.min(width, height)}
+                    opacity={opacity}
+                  />
+                )}
+                {mode === "result" && pairAnalysis && (
+                  <ScanOutlines
+                    shapes={shapes}
+                    width={width}
+                    height={height}
+                    turn={turn}
+                    focus={focus}
+                    drawKey={`${pairAnalysis.id}:${replay}`}
+                  />
+                )}
+                {(mode === "analyze" ||
+                  (mode === "match" && target?.id === shown[side].id)) && (
+                  <ScanOverlay
+                    scanner={scanner}
+                    width={width}
+                    height={height}
+                    turn={turn}
+                  />
+                )}
+              </>
+            )}
+            height={paneHeight}
+            label={side === "before" ? "Before" : "After"}
+            steps={side === "before" ? beforeSteps : afterSteps}
+          />
+        ))}
+        {mode && speech.line && !quiet ? (
+          <View
+            style={[styles.voice, { bottom: paneHeight + SEAM / 2 - 22 }]}
+          >
+            <AiBubble
+              text={speech.line.text}
+              thinking={mode !== "result"}
+              onPress={
+                mode === "result"
+                  ? onLast
+                    ? () => setHeard(reading)
+                    : speech.next
                   : undefined
               }
-              height={paneHeight}
-              label={side === "before" ? "Before" : "After"}
-              steps={side === "before" ? beforeSteps : afterSteps}
             />
-          ),
+          </View>
+        ) : (
+          <View style={[styles.seamRow, { top: paneHeight + SEAM / 2 - 15 }]}>
+            <View pointerEvents="none" style={styles.seam}>
+              <Text style={styles.seamText}>
+                {elapsedDays(before.taken_at, after.taken_at)} days
+              </Text>
+            </View>
+            {quiet && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Read the findings again"
+                onPress={() => setReplay((n) => n + 1)}
+                style={[styles.seam, styles.findings]}
+              >
+                <Text style={[styles.seamText, { color: "#7CF2B6" }]}>
+                  ✦ Findings
+                </Text>
+              </Pressable>
+            )}
+          </View>
         )}
-        <View
-          pointerEvents="none"
-          style={[styles.seam, { top: paneHeight + SEAM / 2 - 15 }]}
-        >
-          <Text style={styles.seamText}>
-            {elapsedDays(before.taken_at, after.taken_at)} days
-          </Text>
-        </View>
       </View>
-      {lining ? (
-        <Card>
-          <Text style={s.muted}>
-            Drag, pinch and twist each photo onto the guide. The buttons adjust
-            the outlined photo.
-          </Text>
-          <Segmented
-            values={[
-              { value: "before", label: "Before" },
-              { value: "after", label: "After" },
-            ]}
-            selected={active}
-            onChange={setActive}
-          />
-          <FineTune edit={edits[active]} />
-          <View style={s.wrap}>
-            <Button
-              label={`Match to ${other}`}
-              icon="align"
-              variant="secondary"
-              busy={busy}
-              style={{ flex: 1 }}
-              onPress={() => void match()}
-            />
-            <Button
-              label="Turn guide"
-              icon="turn"
-              variant="secondary"
-              style={{ flex: 1 }}
-              onPress={turnGuide}
-            />
-          </View>
-          <View style={s.wrap}>
-            <Button
-              label="Reset"
-              variant="ghost"
-              style={{ flex: 1 }}
-              onPress={() => setFraming(edits[active], IDENTITY)}
-            />
-            <Button
-              label="Cancel"
-              variant="secondary"
-              style={{ flex: 1 }}
-              onPress={() => setLining(false)}
-            />
-            <Button
-              label="Save"
-              style={{ flex: 1 }}
-              busy={save.isPending}
-              onPress={() => void persist()}
-            />
-          </View>
-        </Card>
-      ) : (
-        <Card style={styles.toolbar}>
-          <IconButton
-            icon="grid"
-            label="Grid"
-            active={grid}
-            onPress={() => setGrid(!grid)}
-          />
-          <IconButton
-            icon="ghost"
-            label="Guide"
-            active={guide}
-            onPress={() => setGuide(!guide)}
-          />
-          <IconButton
-            icon="change"
-            label="Change"
-            active={change}
-            onPress={() => setChange(!change)}
-          />
-          {(earlierAnalysis || laterAnalysis) && (
-            <IconButton
-              icon="eye"
-              label="Regions"
-              active={regions}
-              onPress={() => setRegions(!regions)}
-            />
+
+      <Card style={{ gap: 16 }}>
+        <Step
+          n={1}
+          title="Line up"
+          status={
+            framed ? "done" : matching ? "working" : missed ? "attention" : "todo"
+          }
+        >
+          {matching && (
+            <Text style={s.muted}>
+              {aiBusy
+                ? "Claude is finding the same spots in both photos…"
+                : "Matching the photos…"}
+            </Text>
           )}
-          <IconButton icon="move" label="Line up" onPress={startLining} />
-        </Card>
-      )}
-      {changeShown && (
+          {framed && (
+            <View style={styles.inline}>
+              <Text style={[s.muted, { flexShrink: 1 }]}>
+                The photos are lined up.
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={adjust}
+              >
+                <Text style={styles.link}>Adjust</Text>
+              </Pressable>
+            </View>
+          )}
+          {missed && target && (
+            <>
+              <Text style={s.body}>
+                Couldn&apos;t match the {formatDate(target.taken_at)} photo
+                automatically.
+              </Text>
+              {AI_MATCH && !triedAi.includes(target.id) ? (
+                <MatchChoices onAi={() => void aiMatch()} onHand={adjust} />
+              ) : (
+                <Button label="Line up by hand" icon="move" onPress={adjust} />
+              )}
+            </>
+          )}
+          {framed && unframed > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              disabled={Boolean(autoLineUp.progress)}
+              onPress={() =>
+                void autoLineUp.run(photos).catch((e) => setError(errorMessage(e)))
+              }
+            >
+              <Text style={styles.link}>
+                {autoLineUp.progress
+                  ? `Lining up ${autoLineUp.progress.done + 1} of ${autoLineUp.progress.total}…`
+                  : `Line up the other ${unframed} ${VIEW_LABELS[view].toLowerCase()} ${unframed === 1 ? "photo" : "photos"}`}
+              </Text>
+            </Pressable>
+          )}
+        </Step>
+        <Step
+          n={2}
+          title="Analyze"
+          status={
+            analyzing
+              ? "working"
+              : pairAnalysis
+                ? "done"
+                : framed
+                  ? "todo"
+                  : "locked"
+          }
+        >
+          {!framed && (
+            <Text style={s.muted}>Once both photos are lined up.</Text>
+          )}
+          {framed && analyzing && (
+            <Text style={s.muted}>Scanning both photos…</Text>
+          )}
+          {framed && pairAnalysis && !analyzing && (
+            <View style={styles.inline}>
+              <Text style={[s.body, { flexShrink: 1, fontWeight: "700" }]}>
+                {verdict && verdictText(verdict)}
+                <Text style={s.muted}>
+                  {"  "}
+                  {pairAnalysis.result.confidence} confidence
+                </Text>
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => setReplay((n) => n + 1)}
+              >
+                <Text style={styles.link}>Replay</Text>
+              </Pressable>
+            </View>
+          )}
+          {framed &&
+            !analyzing &&
+            (canAnalyze ? (
+              <>
+                <Button
+                  label={pairAnalysis ? "Analyze again" : "Analyze"}
+                  icon="eye"
+                  variant={pairAnalysis ? "secondary" : "primary"}
+                  onPress={() => void runAnalysis()}
+                />
+                <Text style={styles.small}>
+                  Sends both photos, your notes and treatments to{" "}
+                  {DEV_ANALYSIS_URL
+                    ? `the developer analysis server at ${DEV_ANALYSIS_URL}`
+                    : "the AI provider"}
+                  .
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={s.muted}>Analysis needs an account.</Text>
+                <Button
+                  label="Sign in"
+                  variant="secondary"
+                  onPress={() => router.push("/account")}
+                />
+              </>
+            ))}
+        </Step>
+      </Card>
+
+      <Card style={styles.toolbar}>
+        <IconButton
+          icon="ghost"
+          label="Guide"
+          active={guide}
+          onPress={() => setGuide(!guide)}
+        />
+        <IconButton
+          icon="grid"
+          label="Grid"
+          active={grid}
+          onPress={() => setGrid(!grid)}
+        />
+        <IconButton
+          icon="change"
+          label="Change"
+          active={change}
+          onPress={() => setChange(!change)}
+        />
+      </Card>
+      {change && (
         <Card>
           {changeMap.status === "unframed" ? (
             <Text style={s.body}>Line up both photos to see change</Text>
@@ -528,27 +714,7 @@ export function ComparisonViewer({
         </Card>
       )}
       <ChangeExplainer visible={explain} onClose={() => setExplain(false)} />
-      {Boolean(message) && <Notice>{message}</Notice>}
       {Boolean(error) && <Notice error>{error}</Notice>}
-      {offer && unframed > 0 && (
-        <Card>
-          <Text style={s.body}>
-            {unframed} other {VIEW_LABELS[view].toLowerCase()}{" "}
-            {unframed === 1 ? "photo isn't" : "photos aren't"} lined up yet.
-            They can be matched to the photos already lined up.
-          </Text>
-          <Button
-            label={
-              autoLineUp.progress
-                ? `Lining up ${autoLineUp.progress.done + 1} of ${autoLineUp.progress.total}…`
-                : "Line them up automatically"
-            }
-            icon="align"
-            busy={Boolean(autoLineUp.progress)}
-            onPress={() => void lineUpRest()}
-          />
-        </Card>
-      )}
     </View>
   );
 }
@@ -571,9 +737,14 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#FFFFFF66",
   },
-  seam: {
+  seamRow: {
     position: "absolute",
     alignSelf: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  findings: { backgroundColor: colors.stage, borderColor: "#7CF2B6" },
+  seam: {
     height: 30,
     paddingHorizontal: 14,
     borderRadius: 15,
@@ -588,6 +759,32 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontVariant: ["tabular-nums"],
   },
+  voice: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    alignItems: "center",
+  },
+  step: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
+  badge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
+  badgeText: { fontSize: 13, fontWeight: "800", color: colors.ink },
+  stepTitle: { fontSize: 16, fontWeight: "700", color: colors.ink, marginTop: 3 },
+  inline: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  small: { fontSize: 12, lineHeight: 16, color: colors.muted },
   toolbar: {
     flexDirection: "row",
     justifyContent: "space-around",

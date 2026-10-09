@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CLOSEUP_VIEWS, type GuideStyle } from "@/lib/guide-art";
 import type { ScalpView } from "@/lib/model";
 
 /** On-device choices that shape how photos are shown, kept across launches. */
@@ -11,7 +12,16 @@ export type Preferences = {
   lastView?: ScalpView;
   /** Quarter turns clockwise for each view's guide and its photos. */
   turns: Partial<Record<ScalpView, number>>;
+  /** Whether each view's photos line up against a whole head or a close-up of the whorl. */
+  guides?: Partial<Record<ScalpView, GuideStyle>>;
 };
+
+/** The guide picture a view's photos line up against. */
+export function guideStyleOf(preferences: Preferences, view: ScalpView) {
+  return CLOSEUP_VIEWS.includes(view)
+    ? (preferences.guides?.[view] ?? "head")
+    : "head";
+}
 
 const KEY = "hair-compare:preferences:v1";
 const DEFAULTS: Preferences = { pairs: {}, turns: {} };
@@ -19,6 +29,28 @@ const DEFAULTS: Preferences = { pairs: {}, turns: {} };
 async function read(): Promise<Preferences> {
   const value = await AsyncStorage.getItem(KEY);
   return value ? { ...DEFAULTS, ...JSON.parse(value) } : DEFAULTS;
+}
+
+/**
+ * How a view's guide is shown, and the controls that change it. Switching
+ * pictures only changes what is shown: each framing records the picture it
+ * was placed on and is read on whichever one shows.
+ */
+export function useViewGuide(view: ScalpView) {
+  const { preferences, ready, update } = usePreferences();
+  return {
+    /** The stored choices have loaded; before then these are defaults. */
+    ready,
+    turn: preferences.turns[view] ?? 0,
+    variant: guideStyleOf(preferences, view),
+    turnGuide: () =>
+      update((p) => ({
+        ...p,
+        turns: { ...p.turns, [view]: ((p.turns[view] ?? 0) + 1) % 4 },
+      })),
+    setVariant: (next: GuideStyle) =>
+      update((p) => ({ ...p, guides: { ...p.guides, [view]: next } })),
+  };
 }
 
 export function usePreferences() {

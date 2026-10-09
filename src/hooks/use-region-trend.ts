@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { timelineOf } from "@/hooks/use-comparison";
 import { changeMapQuery, changeResult } from "@/hooks/use-change-map";
+import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
 import { framingOf } from "@/lib/framing";
 import { SCALP_VIEWS, type Photo, type ScalpView } from "@/lib/model";
 import { framedPairs, regionTrend, type Trend } from "@/lib/trend";
@@ -29,6 +30,8 @@ export function useRegionTrends(
   );
   // Remember a selection during render, as comparison-viewer does for its pair.
   if (!visited.has(selected)) setVisited(new Set([...visited, selected]));
+  // Maps are compared on each view's picture, as Compare shows them.
+  const { preferences } = usePreferences();
 
   const regions = SCALP_VIEWS.map((view) => {
     const timeline = timelineOf(photos, view);
@@ -40,7 +43,12 @@ export function useRegionTrends(
   );
   const results = useQueries({
     queries: flat.map(({ view, before, after }) =>
-      changeMapQuery(before, after, visited.has(view)),
+      changeMapQuery(
+        before,
+        after,
+        guideStyleOf(preferences, view),
+        visited.has(view),
+      ),
     ),
   });
 

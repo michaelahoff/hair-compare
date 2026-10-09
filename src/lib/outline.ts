@@ -1,17 +1,15 @@
 /**
  * Region outlines as polygons in image fractions (0 to 1, from the top left),
- * and the maths to draw, resample and morph them.
+ * resampling them, and carrying points between photos and the guide.
  *
  * Pure functions with no React or Expo imports, so they run under `bun test`.
- * Functions marked "worklet" are also called from Reanimated animated props,
- * so they must not call anything outside themselves.
  */
 import {
   applySimilarity,
   invertSimilarity,
   type Similarity,
 } from "./alignment/transform";
-import { baseBox } from "./framing";
+import { baseBox, photoPointToGuide } from "./framing";
 
 export type Point = { x: number; y: number };
 
@@ -59,7 +57,6 @@ export function orientClockwise(points: Point[]): Point[] {
  * (collinear or repeated points). `points` must not be empty.
  */
 export function centroid(points: Point[]): Point {
-  "worklet";
   let twiceArea = 0;
   let x = 0;
   let y = 0;
@@ -150,35 +147,6 @@ function pointAt(ring: Point[], offsets: number[], distance: number): Point {
 }
 
 /**
- * SVG path for a closed polygon in image fractions, drawn at `width` by
- * `height` pixels. Coordinates are rounded to a tenth of a pixel.
- */
-export function toPath(points: Point[], width: number, height: number): string {
-  "worklet";
-  let d = "";
-  for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    const x = Math.round(p.x * width * 10) / 10;
-    const y = Math.round(p.y * height * 10) / 10;
-    d += `${i === 0 ? "M" : "L"}${x} ${y}`;
-  }
-  return `${d}Z`;
-}
-
-/** Point by point, a fraction `t` of the way from `a` to `b`. Same length. */
-export function lerpPoints(a: Point[], b: Point[], t: number): Point[] {
-  "worklet";
-  const out: Point[] = [];
-  for (let i = 0; i < a.length; i++) {
-    out.push({
-      x: a[i].x + (b[i].x - a[i].x) * t,
-      y: a[i].y + (b[i].y - a[i].y) * t,
-    });
-  }
-  return out;
-}
-
-/**
  * Map fractions of one photo onto another, both drawn on their view's guide.
  * Each photo's framing places it on the guide, so a point is carried through
  * `from`'s framing and back out through `to`'s inverse framing.
@@ -201,5 +169,33 @@ export function mapBetweenPhotos(
     );
     const [u, v] = applySimilarity(toInverse, guide[0], guide[1]);
     return { x: u / toBox.width + 0.5, y: v / toBox.height + 0.5 };
+  });
+}
+
+/**
+ * Photo fractions to guide units: centred on the guide square, side 1,
+ * before the view's turn. A region in guide units sits on the same spot of
+ * every photo of the view that is lined up.
+ */
+export function photoToGuide(
+  points: Point[],
+  photo: { width: number; height: number },
+  framing: Similarity,
+): Point[] {
+  const box = baseBox(photo);
+  return points.map((p) => photoPointToGuide(p.x, p.y, box, framing));
+}
+
+/** Guide units back to photo fractions: the inverse of `photoToGuide`. */
+export function guideToPhoto(
+  points: Point[],
+  photo: { width: number; height: number },
+  framing: Similarity,
+): Point[] {
+  const box = baseBox(photo);
+  const inverse = invertSimilarity(framing);
+  return points.map((p) => {
+    const [x, y] = applySimilarity(inverse, p.x, p.y);
+    return { x: x / box.width + 0.5, y: y / box.height + 0.5 };
   });
 }

@@ -21,6 +21,11 @@ export const SCALP_AREAS = [
   "mid_scalp",
   "crown",
 ] as const;
+export type ScalpArea = (typeof SCALP_AREAS)[number];
+
+export const SEVERITIES = ["none", "mild", "moderate", "severe"] as const;
+export type Severity = (typeof SEVERITIES)[number];
+
 export const NORWOOD_STAGES = [
   "1",
   "2",
@@ -52,7 +57,7 @@ export const ScalpAnalysisSchema = z.object({
   regions: z.array(
     z.object({
       area: z.enum(SCALP_AREAS),
-      severity: z.enum(["none", "mild", "moderate", "severe"]),
+      severity: z.enum(SEVERITIES),
       observation: z.string(),
       /** Approximate location as fractions (0-1) of image width/height; null if not visible. */
       box: z

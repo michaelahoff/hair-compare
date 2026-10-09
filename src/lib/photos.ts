@@ -168,6 +168,39 @@ export async function alignPhotos(
     );
   return result;
 }
+/**
+ * A photo shrunk to `longest` pixels on its longer side, as base64 JPEG with
+ * its exact size, for a model asked to point at things in it.
+ */
+export async function modelJpeg(
+  photo: { uri: string; width: number; height: number },
+  longest = 768,
+) {
+  const context = ImageManipulator.manipulate(photo.uri);
+  if (Math.max(photo.width, photo.height) > longest)
+    context.resize(
+      photo.width >= photo.height ? { width: longest } : { height: longest },
+    );
+  const rendered = await context.renderAsync();
+  try {
+    const result = await rendered.saveAsync({
+      format: SaveFormat.JPEG,
+      compress: 0.88,
+      base64: true,
+    });
+    if (!result.base64) throw new Error("The photo could not be prepared.");
+    return {
+      base64: result.base64,
+      media_type: "image/jpeg" as const,
+      width: result.width,
+      height: result.height,
+    };
+  } finally {
+    rendered.release();
+    context.release();
+  }
+}
+
 export function jpegDataUri(bytes: Uint8Array): string {
   return `data:image/jpeg;base64,${fromByteArray(bytes)}`;
 }

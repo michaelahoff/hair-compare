@@ -23,6 +23,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button, Icon, colors } from "@/components/ui";
+import { Guide } from "@/components/guide";
+import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
 import { useJournal } from "@/hooks/use-journal";
 import type { GrayImage } from "@/lib/alignment";
 import { setCapture } from "@/lib/capture-store";
@@ -97,6 +99,7 @@ export default function CaptureScreen() {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const journal = useJournal();
+  const { preferences } = usePreferences();
   const [permission, requestPermission] = useCameraPermissions();
   const camera = useRef<CameraView>(null);
   const [view, setView] = useState<ScalpView>(params.view ?? "top");
@@ -360,6 +363,16 @@ export default function CaptureScreen() {
           onCameraReady={() => setReady(true)}
           onMountError={(e) => setError(e.message)}
         />
+        {/* No earlier photo showing: frame the head like the guide's picture. */}
+        {(!ghost || GHOST_LEVELS[level] === 0) && (
+          <Guide
+            view={view}
+            turn={0}
+            size={boxWidth}
+            variant={guideStyleOf(preferences, view)}
+            hair={0.3}
+          />
+        )}
         {ghost && GHOST_LEVELS[level] > 0 && (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <Image

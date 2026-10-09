@@ -1,7 +1,9 @@
 // Assess one scalp photo with Claude vision and store the result in `analyses`.
 //
-// POST { "photoId": "<uuid>" } with the user's Supabase session as the bearer
-// token. Runs under the caller's RLS, so users can only analyse their own photos.
+// POST { "photoId": "<uuid>", "previousId"?: "<uuid>" } with the user's Supabase
+// session as the bearer token. `previousId` picks the earlier photo of the same
+// view to compare with (Compare's chosen pair); without it, the latest earlier
+// one. Runs under the caller's RLS, so users can only analyse their own photos.
 // Secrets: ANTHROPIC_API_KEY (set with `supabase secrets set`).
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -80,17 +82,21 @@ async function handleRequest(req: Request): Promise<Response> {
   if (authError || !auth.user) return json({ error: "Not signed in" }, 401);
 
   const body: unknown = await req.json().catch(() => null);
-  const photoId =
-    body && typeof body === "object" && "photoId" in body
-      ? body.photoId
+  const field = (name: string) =>
+    body && typeof body === "object" && name in body
+      ? (body as Record<string, unknown>)[name]
       : undefined;
-  if (
-    typeof photoId !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      photoId,
-    )
-  )
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const photoId = field("photoId");
+  if (typeof photoId !== "string" || !uuid.test(photoId))
     return json({ error: "A valid photoId is required" }, 400);
+  const previousId = field("previousId");
+  if (
+    previousId !== undefined &&
+    previousId !== null &&
+    (typeof previousId !== "string" || !uuid.test(previousId))
+  )
+    return json({ error: "previousId must be a photo id" }, 400);
 
   const { data: photo, error: photoError } = await supabase
     .from("photos")
@@ -101,12 +107,20 @@ async function handleRequest(req: Request): Promise<Response> {
   if (photoError) return json({ error: photoError.message }, 500);
   if (!photo) return json({ error: "Photo not found" }, 404);
 
-  const { data: previous, error: previousError } = await supabase
+  let earlier = supabase
     .from("photos")
     .select(PHOTO_COLUMNS)
     .eq("view", photo.view)
-    .eq("user_id", auth.user.id)
-    .lt("taken_at", photo.taken_at)
+    .eq("user_id", auth.user.id);
+  // A chosen photo may share the day: photos are dated by day, at noon.
+  earlier =
+    typeof previousId === "string"
+      ? earlier
+          .eq("id", previousId)
+          .neq("id", photo.id)
+          .lte("taken_at", photo.taken_at)
+      : earlier.lt("taken_at", photo.taken_at);
+  const { data: previous, error: previousError } = await earlier
     .order("taken_at", { ascending: false })
     .limit(1)
     .maybeSingle<PhotoRow>();
@@ -114,6 +128,11 @@ async function handleRequest(req: Request): Promise<Response> {
     return json(
       { error: "Earlier photos could not be loaded. Try again." },
       500,
+    );
+  if (typeof previousId === "string" && !previous)
+    return json(
+      { error: "Compare with another photo of the same view, taken the same day or earlier." },
+      400,
     );
 
   const { data: treatments, error: treatmentsError } = await supabase

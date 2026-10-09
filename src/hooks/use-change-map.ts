@@ -8,6 +8,7 @@ import {
   type ChangeMap,
 } from "@/lib/change-map";
 import { framingOf, type Framing } from "@/lib/framing";
+import type { GuideStyle } from "@/lib/guide-art";
 import { guideGray } from "@/lib/photos";
 import type { Photo } from "@/lib/model";
 
@@ -44,9 +45,13 @@ function afterPaint() {
 
 export type ChangeData = { map: ChangeMap; match: number };
 
-async function computeChange(before: Photo, after: Photo): Promise<ChangeData> {
-  const beforeFraming = framingOf(before);
-  const afterFraming = framingOf(after);
+async function computeChange(
+  before: Photo,
+  after: Photo,
+  variant: GuideStyle,
+): Promise<ChangeData> {
+  const beforeFraming = framingOf(before, variant);
+  const afterFraming = framingOf(after, variant);
   if (!beforeFraming || !afterFraming)
     throw new Error("Line up both photos to see change");
   const [b, a] = await Promise.all([
@@ -61,30 +66,36 @@ async function computeChange(before: Photo, after: Photo): Promise<ChangeData> {
   };
 }
 
-const changeKey = (before?: Photo, after?: Photo) =>
+const changeKey = (
+  before: Photo | undefined,
+  after: Photo | undefined,
+  variant: GuideStyle,
+) =>
   [
     "change-map",
     before?.id ?? null,
     after?.id ?? null,
-    before ? framingOf(before) : null,
-    after ? framingOf(after) : null,
+    before ? framingOf(before, variant) : null,
+    after ? framingOf(after, variant) : null,
   ] as const;
 
 /**
  * The texture change map for a pair, cached in memory by both photos and
  * their framings, so lining either photo up again recomputes it. Shared by
- * Compare and the head map's trends.
+ * Compare and the head map's trends. Computed on `variant`, the view's
+ * picture, so close-ups are compared at their own detail.
  */
 export function changeMapQuery(
   before: Photo | undefined,
   after: Photo | undefined,
+  variant: GuideStyle,
   enabled = true,
 ) {
   return queryOptions({
-    queryKey: changeKey(before, after),
+    queryKey: changeKey(before, after, variant),
     queryFn:
       enabled && before && after && framingOf(before) && framingOf(after)
-        ? () => computeChange(before, after)
+        ? () => computeChange(before, after, variant)
         : skipToken,
     staleTime: Infinity,
     gcTime: 30 * 60 * 1000,
@@ -114,6 +125,7 @@ export type ChangeResult = ReturnType<typeof changeResult>;
 export function useChangeMap(
   before: Photo | undefined,
   after: Photo | undefined,
+  variant: GuideStyle,
   enabled = true,
 ): {
   status: "unframed" | "idle" | "loading" | "ready" | "error";
@@ -123,7 +135,7 @@ export function useChangeMap(
   const framed = Boolean(
     before && after && framingOf(before) && framingOf(after),
   );
-  const query = useQuery(changeMapQuery(before, after, enabled));
+  const query = useQuery(changeMapQuery(before, after, variant, enabled));
   if (!before || !after || !framed)
     return { status: "unframed", result: null, error: null };
   if (query.data)
