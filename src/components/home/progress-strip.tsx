@@ -2,16 +2,15 @@ import type { ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { FramedThumb } from "@/components/framed-photo";
 import { colors, fonts } from "@/components/ui";
-import { VIEW_LABELS, elapsedDays, formatDate, type Photo } from "@/lib/model";
+import {
+  VIEW_LABELS,
+  elapsedDays,
+  formatDate,
+  shortDate,
+  type Photo,
+} from "@/lib/model";
 
 const THUMB = 56;
-
-function shortDate(value: string) {
-  return new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString(
-    undefined,
-    { month: "short", day: "numeric" },
-  );
-}
 
 /**
  * A region's before and after, lined up, with a tick for every photo in

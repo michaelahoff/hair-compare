@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   StyleSheet,
   Text,
@@ -20,8 +19,9 @@ import {
   colors,
   s,
 } from "@/components/ui";
-import { ZoomFrame, ZoomableImage, useZoom } from "@/components/zoom";
-import { FramedPhoto, snapFeedback } from "@/components/framed-photo";
+import { ZoomableImage } from "@/components/zoom";
+import { snapFeedback } from "@/components/framed-photo";
+import { LinedUpPhoto } from "@/components/lined-up-photo";
 import { JournalState } from "@/components/journal-state";
 import { AnalysisCard } from "@/components/analysis-card";
 import {
@@ -30,8 +30,7 @@ import {
   useJournalMutation,
 } from "@/hooks/use-journal";
 import { useComparison } from "@/hooks/use-comparison";
-import { usePreferences } from "@/hooks/use-preferences";
-import { useLineUpState } from "@/hooks/use-auto-line-up";
+import { isLiningUp, useLineUpState } from "@/hooks/use-auto-line-up";
 import { analyzePhoto, deletePhoto } from "@/lib/repository";
 import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
 import { framingOf } from "@/lib/framing";
@@ -40,63 +39,7 @@ import {
   VIEW_LABELS,
   errorMessage,
   formatDate,
-  type Photo,
 } from "@/lib/model";
-
-/**
- * The photo as it sits on its view's guide, the way Compare shows it. While a
- * new photo is being matched it shows as taken, then snaps into place.
- */
-function LinedUpPhoto({
-  photo,
-  height,
-  matching,
-  onOriginal,
-}: {
-  photo: Photo;
-  height: number;
-  matching: boolean;
-  onOriginal: () => void;
-}) {
-  const zoom = useZoom();
-  const { preferences } = usePreferences();
-  return (
-    <ZoomFrame
-      zoom={zoom}
-      height={height}
-      style={{ borderRadius: 22 }}
-      overlay={
-        <View style={styles.tag}>
-          {matching ? (
-            <View style={styles.matching}>
-              <ActivityIndicator size="small" color="#FFF" />
-              <Text style={styles.tagText}>Lining up…</Text>
-            </View>
-          ) : (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Show the original photo"
-              hitSlop={8}
-              onPress={onOriginal}
-            >
-              <Pill tone="dark">Lined up · Show original</Pill>
-            </Pressable>
-          )}
-        </View>
-      }
-    >
-      {(width) => (
-        <FramedPhoto
-          photo={photo}
-          turn={preferences.turns[photo.view] ?? 0}
-          width={width}
-          height={height}
-          unframed="contain"
-        />
-      )}
-    </ZoomFrame>
-  );
-}
 
 export default function PhotoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -115,7 +58,7 @@ export default function PhotoScreen() {
   const [error, setError] = useState("");
   const [original, setOriginal] = useState(false);
   const lineUp = useLineUpState(id);
-  const matching = lineUp === "queued" || lineUp === "matching";
+  const matching = isLiningUp(lineUp);
   // A tap as the photo lands, when that happens while it's on screen.
   const wasMatching = useRef(matching);
   useEffect(() => {
@@ -327,14 +270,4 @@ export default function PhotoScreen() {
 
 const styles = StyleSheet.create({
   tag: { position: "absolute", top: 10, left: 10 },
-  matching: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    height: 28,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: "rgba(15,26,23,0.72)",
-  },
-  tagText: { color: "#FFF", fontSize: 12, fontWeight: "700" },
 });

@@ -59,16 +59,17 @@ export function Guide({
   view,
   turn,
   size,
-  style = "head",
+  variant = "head",
   hair = 0.16,
 }: {
   view: ScalpView;
   turn: number;
   size: number;
-  style?: GuideStyle;
+  /** The whole head, or the close-up of the whorl. */
+  variant?: GuideStyle;
   hair?: number;
 }) {
-  const art = guideArt(view, style);
+  const art = guideArt(view, variant);
   return (
     <View
       pointerEvents="none"

@@ -10,11 +10,9 @@ export const AI_MATCH = Boolean(DEV_ANALYSIS_URL);
  * Claude to find the same spots in both photos, or line it up by hand.
  */
 export function MatchChoices({
-  busy,
   onAi,
   onHand,
 }: {
-  busy?: boolean;
   onAi: () => void;
   onHand: () => void;
 }) {
@@ -25,7 +23,6 @@ export function MatchChoices({
           <Button
             label="AI match"
             icon="eye"
-            busy={busy}
             style={{ flex: 1 }}
             onPress={onAi}
           />
@@ -34,7 +31,6 @@ export function MatchChoices({
           label="By hand"
           icon="move"
           variant="secondary"
-          disabled={busy}
           style={{ flex: 1 }}
           onPress={onHand}
         />

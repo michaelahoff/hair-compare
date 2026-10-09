@@ -9,7 +9,12 @@ import Animated, {
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { readFraming, type FramingEdit } from "./framed-photo";
-import { baseBox } from "@/lib/framing";
+import {
+  baseBox,
+  frameDeltaToPhoto,
+  guideToFrame,
+  photoPointToGuide,
+} from "@/lib/framing";
 import type { Point } from "@/lib/outline";
 
 /** Pin colours, in the order pins are added. */
@@ -66,7 +71,6 @@ export function PinMarker({
     fx.set(at.x);
     fy.set(at.y);
   }, [at.x, at.y, fx, fy]);
-  const turnAngle = (turn * Math.PI) / 2;
 
   const tap = () =>
     Haptics.selectionAsync().catch(() => {});
@@ -78,21 +82,16 @@ export function PinMarker({
       scheduleOnRN(tap);
     })
     .onChange((e) => {
-      // Screen travel → guide units (undo the turn) → photo fractions (undo
-      // the framing's turn and scale, then the photo's size on the guide).
-      const c = Math.cos(-turnAngle);
-      const s = Math.sin(-turnAngle);
-      const gx = (c * e.changeX - s * e.changeY) / size;
-      const gy = (s * e.changeX + c * e.changeY) / size;
-      const f = readFraming(edit);
-      const fc = Math.cos(-f.rotation) / f.scale;
-      const fs = Math.sin(-f.rotation) / f.scale;
-      fx.set(
-        Math.min(1, Math.max(0, fx.get() + (fc * gx - fs * gy) / base.width)),
+      const d = frameDeltaToPhoto(
+        e.changeX,
+        e.changeY,
+        turn,
+        size,
+        base,
+        readFraming(edit),
       );
-      fy.set(
-        Math.min(1, Math.max(0, fy.get() + (fs * gx + fc * gy) / base.height)),
-      );
+      fx.set(Math.min(1, Math.max(0, fx.get() + d.x)));
+      fy.set(Math.min(1, Math.max(0, fy.get() + d.y)));
     })
     .onFinalize(() => {
       lift.set(withSpring(0, { duration: 300, dampingRatio: 0.7 }));
@@ -100,19 +99,12 @@ export function PinMarker({
     });
 
   const placed = useAnimatedStyle(() => {
-    const f = readFraming(edit);
-    const px = (fx.get() - 0.5) * base.width;
-    const py = (fy.get() - 0.5) * base.height;
-    const c = Math.cos(f.rotation) * f.scale;
-    const s = Math.sin(f.rotation) * f.scale;
-    const gx = c * px - s * py + f.tx;
-    const gy = s * px + c * py + f.ty;
-    const tc = Math.cos(turnAngle);
-    const ts = Math.sin(turnAngle);
+    const g = photoPointToGuide(fx.get(), fy.get(), base, readFraming(edit));
+    const at = guideToFrame(g.x, g.y, turn, size, width, height);
     return {
       transform: [
-        { translateX: width / 2 + (tc * gx - ts * gy) * size - RING / 2 },
-        { translateY: height / 2 + (ts * gx + tc * gy) * size - RING / 2 },
+        { translateX: at.x - RING / 2 },
+        { translateY: at.y - RING / 2 },
       ],
     };
   });

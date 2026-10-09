@@ -9,7 +9,7 @@
  *
  * Pure data with no React or Expo imports, so it runs under `bun test`.
  */
-import type { ScalpView } from "./model";
+import type { ScalpArea, ScalpView } from "./model";
 
 /** A whole head, or a close-up of the whorl for photos that fill the frame with hair. */
 export type GuideStyle = "head" | "closeup";
@@ -27,9 +27,13 @@ export type GuideArt = {
 };
 
 /** Where to look on a view, for scanning: the analysis area and its spot on the guide. */
-export type InspectPoint = { area: string; x: number; y: number };
+export type InspectPoint = { area: ScalpArea; x: number; y: number };
 
-const r1 = (n: number) => Math.round(n * 10) / 10;
+/** A feature to pin, and where the view's picture shows it (0 to 100, unturned). */
+export type PinPreset = { id: string; name: string; x: number; y: number };
+
+/** To a tenth of a guide unit, which keeps the paths short. */
+const round1 = (n: number) => Math.round(n * 10) / 10;
 
 /** Deterministic pseudo-random numbers, so the picture is the same every time. */
 function random(seed: number) {
@@ -45,10 +49,10 @@ function ellipse(cx: number, cy: number, rx: number, ry: number) {
   const [a, b] = [rx * k, ry * k];
   return [
     `M${cx} ${cy - ry}`,
-    `C${r1(cx + a)} ${cy - ry} ${cx + rx} ${r1(cy - b)} ${cx + rx} ${cy}`,
-    `C${cx + rx} ${r1(cy + b)} ${r1(cx + a)} ${cy + ry} ${cx} ${cy + ry}`,
-    `C${r1(cx - a)} ${cy + ry} ${cx - rx} ${r1(cy + b)} ${cx - rx} ${cy}`,
-    `C${cx - rx} ${r1(cy - b)} ${r1(cx - a)} ${cy - ry} ${cx} ${cy - ry}Z`,
+    `C${round1(cx + a)} ${cy - ry} ${cx + rx} ${round1(cy - b)} ${cx + rx} ${cy}`,
+    `C${cx + rx} ${round1(cy + b)} ${round1(cx + a)} ${cy + ry} ${cx} ${cy + ry}`,
+    `C${round1(cx - a)} ${cy + ry} ${cx - rx} ${round1(cy + b)} ${cx - rx} ${cy}`,
+    `C${cx - rx} ${round1(cy - b)} ${round1(cx - a)} ${cy - ry} ${cx} ${cy - ry}Z`,
   ].join("");
 }
 
@@ -60,7 +64,7 @@ function spiral(cx: number, cy: number, radius: number, turns: number) {
     const t = i / steps;
     const angle = t * turns * 2 * Math.PI;
     const r = 0.4 + t * radius;
-    d += `${i ? "L" : "M"}${r1(cx + r * Math.cos(angle))} ${r1(cy + r * Math.sin(angle))}`;
+    d += `${i ? "L" : "M"}${round1(cx + r * Math.cos(angle))} ${round1(cy + r * Math.sin(angle))}`;
   }
   return d;
 }
@@ -99,14 +103,14 @@ function strands(
     if (!grows(x, y)) continue;
     made++;
     const steps = Math.round((length * (0.6 + next() * 0.6)) / step);
-    let line = `M${r1(x)} ${r1(y)}`;
+    let line = `M${round1(x)} ${round1(y)}`;
     for (let i = 0; i < steps; i++) {
       const [vx, vy] = field(x, y);
       const n = Math.hypot(vx, vy) || 1;
       x += (vx / n) * step;
       y += (vy / n) * step;
       if (!grows(x, y)) break;
-      line += `L${r1(x)} ${r1(y)}`;
+      line += `L${round1(x)} ${round1(y)}`;
     }
     d += line;
   }
@@ -129,9 +133,9 @@ const mirror = (d: string) =>
   d
     .replace(
       /([MLCQ ])(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g,
-      (_m, cmd, x, y) => `${cmd}${r1(100 - Number(x))} ${y}`,
+      (_m, cmd, x, y) => `${cmd}${round1(100 - Number(x))} ${y}`,
     )
-    .replace(/H(-?\d+(?:\.\d+)?)/g, (_m, x) => `H${r1(100 - Number(x))}`);
+    .replace(/H(-?\d+(?:\.\d+)?)/g, (_m, x) => `H${round1(100 - Number(x))}`);
 
 function top(): GuideArt {
   const head = inEllipse(50, 54, 35, 41);
@@ -292,140 +296,147 @@ const flip = (art: GuideArt): GuideArt => ({
   features: art.features.map((f) => ({ ...f, d: mirror(f.d) })),
   targets: art.targets.map((t) => ({ ...t, x: 100 - t.x })),
 });
+const flipPoints = <T extends { x: number }>(points: T[]) =>
+  points.map((p) => ({ ...p, x: 100 - p.x }));
 
 /** The views a close-up of the whorl makes sense for. */
 export const CLOSEUP_VIEWS: readonly ScalpView[] = ["top", "crown"];
 
-const cache = new Map<string, GuideArt>();
-
-/** The picture to line `view`'s photos up against. */
-export function guideArt(view: ScalpView, style: GuideStyle = "head"): GuideArt {
-  const key =
-    style === "closeup" && CLOSEUP_VIEWS.includes(view) ? "closeup" : view;
-  let art = cache.get(key);
-  if (!art) {
-    art =
-      key === "closeup"
-        ? closeup()
-        : key === "top"
-          ? top()
-          : key === "crown"
-            ? crown()
-            : key === "hairline"
-              ? hairline()
-              : key === "left_temple"
-                ? temple()
-                : flip(temple());
-    cache.set(key, art);
-  }
-  return art;
+/** A view's picture: its head, or the close-up of the whorl that top and crown share. */
+export type GuideKey = ScalpView | "closeup";
+export function guideKey(view: ScalpView, style: GuideStyle = "head"): GuideKey {
+  return style === "closeup" && CLOSEUP_VIEWS.includes(view) ? "closeup" : view;
 }
 
-/**
- * Where an analysis looks on each view's picture, in the order a scan visits
- * them. Areas are the analysis's scalp areas. A face view shows the subject's
- * left temple on the right of the picture.
- */
-export function inspectPoints(
-  view: ScalpView,
-  style: GuideStyle = "head",
-): InspectPoint[] {
-  if (style === "closeup" && CLOSEUP_VIEWS.includes(view))
-    return [
+/** Everything about one picture: how it's drawn, and what to look for on it. */
+type Picture = {
+  art: () => GuideArt;
+  /** What lining a photo up looks for, in words. */
+  landmarks: string;
+  /** Where an analysis looks, in the order a scan visits them. */
+  inspect: InspectPoint[];
+  /** The features worth pinning; "Spot" is anything else, like an edge or a mole. */
+  pins: PinPreset[];
+};
+
+const SPOT: PinPreset = { id: "spot", name: "Spot", x: 50, y: 40 };
+const leftTemple: Omit<Picture, "art"> = {
+  landmarks: "your temple and sideburn",
+  inspect: [
+    { area: "left_temple", x: 62, y: 44 },
+    { area: "frontal_hairline", x: 30, y: 28 },
+    { area: "mid_scalp", x: 40, y: 14 },
+  ],
+  pins: [
+    { id: "temple", name: "Temple", x: 64, y: 46 },
+    { id: "brow", name: "Brow end", x: 44, y: 74 },
+    { id: "ear", name: "Ear", x: 84, y: 72 },
+    SPOT,
+  ],
+};
+
+// A face view shows the subject's left temple on the right of the picture.
+const PICTURES: Record<GuideKey, Picture> = {
+  top: {
+    art: top,
+    landmarks: "the whorl, ears and hairline",
+    inspect: [
+      { area: "frontal_hairline", x: 50, y: 22 },
+      { area: "mid_scalp", x: 50, y: 38 },
+      { area: "crown", x: 50, y: 56 },
+      { area: "left_temple", x: 28, y: 30 },
+      { area: "right_temple", x: 72, y: 30 },
+    ],
+    pins: [
+      { id: "whorl", name: "Whorl", x: 50, y: 54 },
+      { id: "hairline", name: "Hairline", x: 50, y: 19 },
+      { id: "ear-left", name: "Left ear", x: 12, y: 55 },
+      { id: "ear-right", name: "Right ear", x: 88, y: 55 },
+      SPOT,
+    ],
+  },
+  crown: {
+    art: crown,
+    landmarks: "the whorl and the outline of your head",
+    inspect: [
+      { area: "crown", x: 50, y: 52 },
+      { area: "mid_scalp", x: 50, y: 24 },
+      { area: "crown", x: 30, y: 60 },
+      { area: "crown", x: 70, y: 60 },
+    ],
+    pins: [
+      { id: "whorl", name: "Whorl", x: 50, y: 52 },
+      { id: "ear-left", name: "Left ear", x: 7, y: 66 },
+      { id: "ear-right", name: "Right ear", x: 93, y: 66 },
+      { id: "neck", name: "Neck", x: 50, y: 94 },
+      SPOT,
+    ],
+  },
+  closeup: {
+    art: closeup,
+    landmarks: "the whorl and how the hair swirls",
+    inspect: [
       { area: "crown", x: 50, y: 50 },
       { area: "mid_scalp", x: 50, y: 22 },
       { area: "crown", x: 72, y: 62 },
       { area: "crown", x: 30, y: 66 },
-    ];
-  switch (view) {
-    case "top":
-      return [
-        { area: "frontal_hairline", x: 50, y: 22 },
-        { area: "mid_scalp", x: 50, y: 38 },
-        { area: "crown", x: 50, y: 56 },
-        { area: "left_temple", x: 28, y: 30 },
-        { area: "right_temple", x: 72, y: 30 },
-      ];
-    case "crown":
-      return [
-        { area: "crown", x: 50, y: 52 },
-        { area: "mid_scalp", x: 50, y: 24 },
-        { area: "crown", x: 30, y: 60 },
-        { area: "crown", x: 70, y: 60 },
-      ];
-    case "hairline":
-      return [
-        { area: "frontal_hairline", x: 50, y: 31 },
-        { area: "right_temple", x: 24, y: 40 },
-        { area: "left_temple", x: 76, y: 40 },
-        { area: "mid_scalp", x: 50, y: 16 },
-      ];
-    case "left_temple":
-      return [
-        { area: "left_temple", x: 62, y: 44 },
-        { area: "frontal_hairline", x: 30, y: 28 },
-        { area: "mid_scalp", x: 40, y: 14 },
-      ];
-    case "right_temple":
-      return [
-        { area: "right_temple", x: 38, y: 44 },
-        { area: "frontal_hairline", x: 70, y: 28 },
-        { area: "mid_scalp", x: 60, y: 14 },
-      ];
+    ],
+    pins: [{ id: "whorl", name: "Whorl", x: 50, y: 50 }, SPOT],
+  },
+  hairline: {
+    art: hairline,
+    landmarks: "your hairline and brows",
+    inspect: [
+      { area: "frontal_hairline", x: 50, y: 31 },
+      { area: "right_temple", x: 24, y: 40 },
+      { area: "left_temple", x: 76, y: 40 },
+      { area: "mid_scalp", x: 50, y: 16 },
+    ],
+    pins: [
+      { id: "hairline", name: "Hairline", x: 50, y: 30 },
+      { id: "corner-left", name: "Left corner", x: 22, y: 40 },
+      { id: "corner-right", name: "Right corner", x: 78, y: 40 },
+      { id: "brow-left", name: "Left brow", x: 34, y: 78 },
+      { id: "brow-right", name: "Right brow", x: 66, y: 78 },
+      SPOT,
+    ],
+  },
+  left_temple: { art: temple, ...leftTemple },
+  right_temple: {
+    art: () => flip(temple()),
+    landmarks: leftTemple.landmarks,
+    inspect: flipPoints(leftTemple.inspect).map((p) => ({
+      ...p,
+      area: p.area === "left_temple" ? "right_temple" : p.area,
+    })),
+    pins: flipPoints(leftTemple.pins),
+  },
+};
+
+const drawn = new Map<GuideKey, GuideArt>();
+
+/** The picture to line `view`'s photos up against. */
+export function guideArt(view: ScalpView, style: GuideStyle = "head"): GuideArt {
+  const key = guideKey(view, style);
+  let art = drawn.get(key);
+  if (!art) {
+    art = PICTURES[key].art();
+    drawn.set(key, art);
   }
+  return art;
 }
 
-/** A feature to pin, and where the view's picture shows it (0 to 100, unturned). */
-export type PinPreset = { id: string; name: string; x: number; y: number };
+/** What lining up a view's photos looks for, in words. */
+export const guideLandmarks = (view: ScalpView, style: GuideStyle = "head") =>
+  PICTURES[guideKey(view, style)].landmarks;
+
+/** Where an analysis looks on a view's picture, in the order a scan visits them. */
+export const inspectPoints = (view: ScalpView, style: GuideStyle = "head") =>
+  PICTURES[guideKey(view, style)].inspect;
 
 /**
- * The features worth pinning on each view's picture. A new pin starts on its
- * spot in the picture, so on a lined-up photo it is already close. "Spot" is
- * anything else: an edge, a mole, a scar.
+ * The features worth pinning on a view's picture. A new pin starts on its
+ * spot in the picture, so on a lined-up photo it is already close.
  */
-export function pinPresets(
-  view: ScalpView,
-  style: GuideStyle = "head",
-): PinPreset[] {
-  const spot = { id: "spot", name: "Spot", x: 50, y: 40 };
-  if (style === "closeup" && CLOSEUP_VIEWS.includes(view))
-    return [{ id: "whorl", name: "Whorl", x: 50, y: 50 }, spot];
-  switch (view) {
-    case "top":
-      return [
-        { id: "whorl", name: "Whorl", x: 50, y: 54 },
-        { id: "hairline", name: "Hairline", x: 50, y: 19 },
-        { id: "ear-left", name: "Left ear", x: 12, y: 55 },
-        { id: "ear-right", name: "Right ear", x: 88, y: 55 },
-        spot,
-      ];
-    case "crown":
-      return [
-        { id: "whorl", name: "Whorl", x: 50, y: 52 },
-        { id: "ear-left", name: "Left ear", x: 7, y: 66 },
-        { id: "ear-right", name: "Right ear", x: 93, y: 66 },
-        { id: "neck", name: "Neck", x: 50, y: 94 },
-        spot,
-      ];
-    case "hairline":
-      return [
-        { id: "hairline", name: "Hairline", x: 50, y: 30 },
-        { id: "corner-left", name: "Left corner", x: 22, y: 40 },
-        { id: "corner-right", name: "Right corner", x: 78, y: 40 },
-        { id: "brow-left", name: "Left brow", x: 34, y: 78 },
-        { id: "brow-right", name: "Right brow", x: 66, y: 78 },
-        spot,
-      ];
-    case "left_temple":
-    case "right_temple": {
-      const flip = view === "right_temple";
-      const at = (x: number) => (flip ? 100 - x : x);
-      return [
-        { id: "temple", name: "Temple", x: at(64), y: 46 },
-        { id: "brow", name: "Brow end", x: at(44), y: 74 },
-        { id: "ear", name: "Ear", x: at(84), y: 72 },
-        spot,
-      ];
-    }
-  }
-}
+export const pinPresets = (view: ScalpView, style: GuideStyle = "head") =>
+  PICTURES[guideKey(view, style)].pins;

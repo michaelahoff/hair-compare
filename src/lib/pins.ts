@@ -6,9 +6,18 @@
  * Pure functions with no React or Expo imports, so they run under `bun test`.
  */
 import { fitSimilarity, robustSimilarity } from "./alignment/points";
-import { applySimilarity, type Similarity } from "./alignment/transform";
+import {
+  applySimilarity,
+  pixelToNormal,
+  type Similarity,
+} from "./alignment/transform";
 import { compose, type Pin } from "./framing";
-import { guideToPhoto, photoToGuide, type Point } from "./outline";
+import {
+  guideToPhoto,
+  mapBetweenPhotos,
+  photoToGuide,
+  type Point,
+} from "./outline";
 
 type Size = { width: number; height: number };
 
@@ -17,6 +26,19 @@ export type PairPin = { id: string; name: string; before: Point; after: Point };
 
 /** The most pins a pair keeps, so they stay easy to tell apart. */
 export const MAX_PINS = 8;
+
+/**
+ * A new "Spot" pin: an id no other pin will share, and the next free number
+ * `n` for its name, so removing one never leaves two pins alike.
+ */
+export function nextSpot(pins: { id: string; name: string }[], stamp: string) {
+  const taken = pins.flatMap((p) => {
+    const n = /^Spot (\d+)$/.exec(p.name)?.[1];
+    return n ? [Number(n)] : [];
+  });
+  const n = Math.max(0, ...taken) + 1;
+  return { id: `spot-${stamp}-${n}`, name: `Spot ${n}`, n };
+}
 
 /** A guide point (0 to 100 a side, unturned) in a photo's fractions. */
 export function pinAt(
@@ -50,13 +72,13 @@ export function pairPins(
   return ids.map((id) => {
     const b = beforePins.find((p) => p.id === id);
     const a = afterPins.find((p) => p.id === id);
-    const carry = (point: Point, from: Size, fromF: Similarity, to: Size, toF: Similarity) =>
-      guideToPhoto(photoToGuide([point], from, fromF), to, toF)[0];
     return {
       id,
       name: (b ?? a)!.name,
-      before: b ?? carry(a!, after, afterFraming, before, beforeFraming),
-      after: a ?? carry(b!, before, beforeFraming, after, afterFraming),
+      before:
+        b ?? mapBetweenPhotos([a!], after, afterFraming, before, beforeFraming)[0],
+      after:
+        a ?? mapBetweenPhotos([b!], before, beforeFraming, after, afterFraming)[0],
     };
   });
 }
@@ -104,19 +126,18 @@ function pinName(feature: string) {
 /**
  * Pins from the spots a model matched in both photos, given in pixels of the
  * sizes they were sent at. Only spots that agree with the best fit are kept.
+ * Their ids start with `idPrefix`: make it unique to this match, since pins
+ * are paired up by id and these name nothing another pair would share.
  */
 export function pinsFromMatch(
   points: { feature: string; a: Point; b: Point }[],
   sizes: { a: Size; b: Size },
   tolerance: number,
+  idPrefix: string,
 ): PairPin[] {
-  const normal = (p: Point, size: Size): [number, number] => [
-    (p.x - (size.width - 1) / 2) / size.width,
-    (p.y - (size.height - 1) / 2) / size.width,
-  ];
   const pairs = points.map((p) => ({
-    a: normal(p.a, sizes.a),
-    b: normal(p.b, sizes.b),
+    a: pixelToNormal(p.a, sizes.a),
+    b: pixelToNormal(p.b, sizes.b),
   }));
   const fit = robustSimilarity(pairs, tolerance);
   if (!fit) return [];
@@ -127,7 +148,7 @@ export function pinsFromMatch(
     })
     .slice(0, MAX_PINS)
     .map((p, i) => ({
-      id: `ai-${i + 1}`,
+      id: `${idPrefix}-${i + 1}`,
       name: pinName(p.feature),
       before: { x: p.a.x / sizes.a.width, y: p.a.y / sizes.a.height },
       after: { x: p.b.x / sizes.b.width, y: p.b.y / sizes.b.height },

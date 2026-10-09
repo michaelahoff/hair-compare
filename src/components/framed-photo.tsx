@@ -24,8 +24,9 @@ import {
   compose,
   framedTransform,
   framingOf,
+  nearestTurn,
 } from "@/lib/framing";
-import { useLineUpState } from "@/hooks/use-auto-line-up";
+import { isLiningUp, useLineUpState } from "@/hooks/use-auto-line-up";
 import type { Similarity } from "@/lib/alignment";
 import type { GuideStyle } from "@/lib/guide-art";
 import type { Photo } from "@/lib/model";
@@ -117,9 +118,7 @@ function useSnappedPlacement(id: string, target: Placement) {
     move(x, toX);
     move(y, toY);
     move(scale, toScale);
-    // Turn the short way round rather than unwinding whole turns.
-    const turns = Math.round((angle.get() - toAngle) / (2 * Math.PI));
-    move(angle, snap ? toAngle + turns * 2 * Math.PI : toAngle);
+    move(angle, snap ? nearestTurn(angle.get(), toAngle) : toAngle);
   }, [id, toX, toY, toAngle, toScale, x, y, angle, scale]);
   return { x, y, angle, scale };
 }
@@ -206,7 +205,7 @@ export function FramedThumb({
         height={height}
         unframed="cover"
       />
-      {(lineUp === "queued" || lineUp === "matching") && (
+      {isLiningUp(lineUp) && (
         <View style={styles.pending}>
           <ActivityIndicator size="small" color="#FFF" />
         </View>
@@ -263,21 +262,14 @@ export function loadFraming(edit: FramingEdit, framing: Similarity | null) {
   write(edit, framing ?? IDENTITY);
   edit.touched.set(false);
 }
-/** Replace the framing as an edit. */
-export function setFraming(edit: FramingEdit, framing: Similarity) {
-  write(edit, framing);
-  edit.touched.set(true);
-}
 /** Replace the framing as an edit, springing the photo onto it. */
 export function snapFraming(edit: FramingEdit, framing: Similarity) {
   const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, framing.scale));
-  // Turn the short way round rather than unwinding whole turns.
-  const turns = Math.round(
-    (edit.rotation.get() - framing.rotation) / (2 * Math.PI),
-  );
   edit.tx.set(withSpring(framing.tx, SNAP));
   edit.ty.set(withSpring(framing.ty, SNAP));
-  edit.rotation.set(withSpring(framing.rotation + turns * 2 * Math.PI, SNAP));
+  edit.rotation.set(
+    withSpring(nearestTurn(edit.rotation.get(), framing.rotation), SNAP),
+  );
   edit.scale.set(withSpring(scale, SNAP));
   edit.goal.set({ ...framing, scale });
   edit.touched.set(true);
@@ -393,7 +385,7 @@ export function FramingEditor({
         </View>
       </GestureDetector>
       {width > 0 && (
-        <Guide view={photo.view} turn={turn} size={size} style={guide} />
+        <Guide view={photo.view} turn={turn} size={size} variant={guide} />
       )}
       {typeof overlay === "function" ? width > 0 && overlay(width) : overlay}
     </View>

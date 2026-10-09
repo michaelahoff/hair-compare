@@ -2,13 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { IDENTITY, type Similarity } from "./alignment/transform";
 import {
   centroid,
-  lerpPoints,
   mapBetweenPhotos,
   orientClockwise,
   photoToGuide,
   regionPolygon,
   resample,
-  toPath,
   type Point,
 } from "./outline";
 
@@ -170,46 +168,6 @@ describe("centroid", () => {
         { x: 2, y: 0 },
       ]),
     ).toEqual({ x: 1, y: 0 });
-  });
-});
-
-describe("toPath", () => {
-  test("writes a closed path in pixels", () => {
-    expect(
-      toPath(
-        [
-          { x: 0.5, y: 0 },
-          { x: 1, y: 0.5 },
-          { x: 0, y: 1 },
-        ],
-        100,
-        200,
-      ),
-    ).toBe("M50 0L100 100L0 200Z");
-  });
-  test("rounds to a tenth of a pixel", () => {
-    expect(toPath([{ x: 1 / 3, y: 0 }], 100, 100)).toBe("M33.3 0Z");
-  });
-});
-
-describe("lerpPoints", () => {
-  const a: Point[] = [
-    { x: 0, y: 0 },
-    { x: 1, y: 2 },
-  ];
-  const b: Point[] = [
-    { x: 4, y: 4 },
-    { x: 1, y: -2 },
-  ];
-  test("returns the first outline at t = 0 and the second at t = 1", () => {
-    expectPoints(lerpPoints(a, b, 0), a);
-    expectPoints(lerpPoints(a, b, 1), b);
-  });
-  test("moves each point a fraction of the way", () => {
-    expectPoints(lerpPoints(a, b, 0.25), [
-      { x: 1, y: 1 },
-      { x: 1, y: 1 },
-    ]);
   });
 });
 

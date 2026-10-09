@@ -363,13 +363,13 @@ export default function CaptureScreen() {
           onCameraReady={() => setReady(true)}
           onMountError={(e) => setError(e.message)}
         />
-        {/* No earlier photo to match: frame the head like the guide's picture. */}
-        {!ghost && (
+        {/* No earlier photo showing: frame the head like the guide's picture. */}
+        {(!ghost || GHOST_LEVELS[level] === 0) && (
           <Guide
             view={view}
             turn={0}
             size={boxWidth}
-            style={guideStyleOf(preferences, view)}
+            variant={guideStyleOf(preferences, view)}
             hair={0.3}
           />
         )}

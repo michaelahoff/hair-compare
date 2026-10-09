@@ -10,8 +10,9 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AssessmentRequestSchema, ScalpAnalysisSchema, withOutlineBoxes } from "../../supabase/functions/_shared/analysis";
-import { assessmentParts } from "../../supabase/functions/_shared/assessment-prompt";
+import { assessmentParts, type AssessmentPart } from "../../supabase/functions/_shared/assessment-prompt";
 import { PhotoMatchRequestSchema, PhotoMatchSchema, photoMatchParts } from "../../supabase/functions/_shared/photo-match";
+import type { z } from "zod";
 import type { Provider } from "./providers/types";
 
 const HOST = "127.0.0.1";
@@ -27,7 +28,7 @@ const ALLOWED_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 export type RequestLog = {
   provider: ProviderName;
-  route?: "/analyze" | "/match";
+  route?: "/match";
   model: string | null;
   latencyMs: number;
   status: "ok" | "invalid_schema" | "error";
@@ -55,44 +56,28 @@ export function isAllowedOrigin(origin: string, lan = false): boolean {
   return ALLOWED_ORIGIN.test(origin) || (lan && PRIVATE_ORIGIN.test(origin));
 }
 
-/** Validates the body, runs the provider, and checks its output against ScalpAnalysisSchema. */
-export async function analyzeBody(text: string, provider: Provider, model: string | undefined): Promise<Outcome> {
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return failure(400, "Request body must be JSON.", model);
-  }
-  const request = AssessmentRequestSchema.safeParse(json);
-  if (!request.success) return failure(400, `Invalid request: ${summarize(request.error.issues)}`, model);
+type Call = Provider["analyze"];
 
-  const { photo, previous, treatments } = request.data;
-  const parts = assessmentParts(
-    { ...photo, data: photo.base64 },
-    previous && { ...previous, data: previous.base64 },
-    treatments,
-  );
-
-  let output: Awaited<ReturnType<Provider["analyze"]>>;
-  try {
-    output = await provider.analyze(parts, { model });
-  } catch (error) {
-    const message = `Provider failed: ${describeError(error)}`;
-    return { status: 502, body: { error: message }, log: { status: "error", model: model ?? null, error: message } };
-  }
-
-  const checked = ScalpAnalysisSchema.safeParse(output.result);
-  if (!checked.success) {
-    const message = `Result did not match ScalpAnalysisSchema: ${summarize(checked.error.issues)}`;
-    return { status: 502, body: { error: message }, log: { status: "invalid_schema", model: output.model, error: message } };
-  }
-  return { status: 200, body: { result: withOutlineBoxes(checked.data), model: output.model }, log: { status: "ok", model: output.model } };
-}
-
-/** Validates the body, asks the provider for matching points, and checks them against PhotoMatchSchema. */
-export async function matchBody(text: string, provider: Provider, model: string | undefined): Promise<Outcome> {
-  if (!provider.match) {
-    const error = "This provider can't match photos yet. Start the server with --provider claude or api.";
+/**
+ * One model request: parse the body against `request`, build the message
+ * parts, run `call`, and check what comes back against `result`.
+ */
+async function structuredBody<Req, Res>(
+  text: string,
+  model: string | undefined,
+  spec: {
+    request: z.ZodType<Req>;
+    parts: (request: Req) => AssessmentPart[];
+    /** Absent when the provider can't do this yet. */
+    call: Call | undefined;
+    result: z.ZodType<Res>;
+    /** The result schema's name, for errors. */
+    name: string;
+    finish?: (result: Res) => unknown;
+  },
+): Promise<Outcome> {
+  if (!spec.call) {
+    const error = "This provider can't do this yet. Start the server with --provider claude or api.";
     return { status: 501, body: { error }, log: { status: "error", model: model ?? null, error } };
   }
   let json: unknown;
@@ -101,25 +86,65 @@ export async function matchBody(text: string, provider: Provider, model: string 
   } catch {
     return failure(400, "Request body must be JSON.", model);
   }
-  const request = PhotoMatchRequestSchema.safeParse(json);
+  const request = spec.request.safeParse(json);
   if (!request.success) return failure(400, `Invalid request: ${summarize(request.error.issues)}`, model);
 
-  let output: Awaited<ReturnType<Provider["analyze"]>>;
+  let output: Awaited<ReturnType<Call>>;
   try {
-    output = await provider.match(photoMatchParts(request.data), { model });
+    output = await spec.call(spec.parts(request.data), { model });
   } catch (error) {
     const message = `Provider failed: ${describeError(error)}`;
     return { status: 502, body: { error: message }, log: { status: "error", model: model ?? null, error: message } };
   }
-  const checked = PhotoMatchSchema.safeParse(output.result);
+
+  const checked = spec.result.safeParse(output.result);
   if (!checked.success) {
-    const message = `Result did not match PhotoMatchSchema: ${summarize(checked.error.issues)}`;
+    const message = `Result did not match ${spec.name}: ${summarize(checked.error.issues)}`;
     return { status: 502, body: { error: message }, log: { status: "invalid_schema", model: output.model, error: message } };
   }
-  return { status: 200, body: { result: checked.data, model: output.model }, log: { status: "ok", model: output.model } };
+  const result = spec.finish ? spec.finish(checked.data) : checked.data;
+  return { status: 200, body: { result, model: output.model }, log: { status: "ok", model: output.model } };
 }
 
-const ROUTES: Record<string, typeof analyzeBody | undefined> = { "/analyze": analyzeBody, "/match": matchBody };
+/** An assessment: validated against ScalpAnalysisSchema, outlines boxed for older clients. */
+export function analyzeBody(text: string, provider: Provider, model: string | undefined): Promise<Outcome> {
+  return structuredBody(text, model, {
+    request: AssessmentRequestSchema,
+    parts: ({ photo, previous, treatments }) =>
+      assessmentParts(
+        { ...photo, data: photo.base64 },
+        previous && { ...previous, data: previous.base64 },
+        treatments,
+      ),
+    call: (parts, options) => provider.analyze(parts, options),
+    result: ScalpAnalysisSchema,
+    name: "ScalpAnalysisSchema",
+    finish: withOutlineBoxes,
+  });
+}
+
+/** The same spots in two photos, validated against PhotoMatchSchema. */
+export function matchBody(text: string, provider: Provider, model: string | undefined): Promise<Outcome> {
+  const { match } = provider;
+  return structuredBody(text, model, {
+    request: PhotoMatchRequestSchema,
+    parts: photoMatchParts,
+    call: match && ((parts, options) => match(parts, options)),
+    result: PhotoMatchSchema,
+    name: "PhotoMatchSchema",
+  });
+}
+
+type Route = {
+  handle: typeof analyzeBody;
+  model: (options: ServerOptions) => string | undefined;
+  /** Logged with the route; assessments, the original route, log without one. */
+  logAs?: "/match";
+};
+const ROUTES: Record<string, Route> = {
+  "/analyze": { handle: analyzeBody, model: (o) => o.model },
+  "/match": { handle: matchBody, model: (o) => o.matchModel, logAs: "/match" },
+};
 
 export function createAnalysisServer(options: ServerOptions): Server {
   return createServer(async (req, res) => {
@@ -132,11 +157,8 @@ export function createAnalysisServer(options: ServerOptions): Server {
   });
 }
 
-async function route(
-  req: IncomingMessage,
-  res: ServerResponse,
-  { provider, providerName, model, matchModel, log, lan }: ServerOptions,
-): Promise<void> {
+async function route(req: IncomingMessage, res: ServerResponse, options: ServerOptions): Promise<void> {
+  const { provider, providerName, model, log, lan } = options;
   const origin = req.headers.origin;
   if (origin !== undefined && !isAllowedOrigin(origin, lan))
     return sendJson(res, 403, { error: "Origin not allowed" }, {});
@@ -157,18 +179,18 @@ async function route(
   }
   if (req.method === "GET" && pathname === "/health")
     return sendJson(res, 200, { ok: true, provider: providerName, model: model ?? null }, cors);
-  const handle = ROUTES[pathname];
-  if (req.method !== "POST" || !handle) return sendJson(res, 404, { error: "Not found" }, cors);
-  const routeModel = pathname === "/match" ? matchModel : model;
+  const target = Object.hasOwn(ROUTES, pathname) ? ROUTES[pathname] : undefined;
+  if (req.method !== "POST" || !target) return sendJson(res, 404, { error: "Not found" }, cors);
+  const routeModel = target.model(options);
 
   const started = performance.now();
   const body = await readBody(req);
   const outcome = body.ok
-    ? await handle(body.text, provider, routeModel)
+    ? await target.handle(body.text, provider, routeModel)
     : failure(body.status, body.error, routeModel);
   await log({
     provider: providerName,
-    ...(pathname === "/match" ? { route: "/match" as const } : {}),
+    ...(target.logAs ? { route: target.logAs } : {}),
     latencyMs: Math.round(performance.now() - started),
     ...outcome.log,
   });

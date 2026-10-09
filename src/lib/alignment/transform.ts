@@ -19,6 +19,20 @@ export type Similarity = {
 
 export const IDENTITY: Similarity = { tx: 0, ty: 0, rotation: 0, scale: 1 };
 
+/**
+ * A pixel's normalised coordinates in an image `size` pixels across, as
+ * described above, e.g. for points a model gives in pixels.
+ */
+export function pixelToNormal(
+  p: { x: number; y: number },
+  size: { width: number; height: number },
+): [number, number] {
+  return [
+    (p.x - (size.width - 1) / 2) / size.width,
+    (p.y - (size.height - 1) / 2) / size.width,
+  ];
+}
+
 export function applySimilarity(t: Similarity, u: number, v: number): [number, number] {
   const c = Math.cos(t.rotation) * t.scale;
   const s = Math.sin(t.rotation) * t.scale;

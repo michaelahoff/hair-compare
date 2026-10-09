@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -6,27 +6,25 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { randomUUID } from "expo-crypto";
 import * as Haptics from "expo-haptics";
 import { Stack, router, useLocalSearchParams } from "expo-router";
 import {
   Button,
   Card,
   Empty,
+  Icon,
   Notice,
   Pill,
   Screen,
+  Segmented,
   colors,
   s,
 } from "@/components/ui";
 import { JournalState } from "@/components/journal-state";
 import { AI_MATCH } from "@/components/match-choices";
 import { PIN_COLORS, PinMarker } from "@/components/pin-marker";
-import {
-  AiBubble,
-  ScanOverlay,
-  useLines,
-  useScanner,
-} from "@/components/scan";
+import { AiBubble, ScanOverlay, useScanTour } from "@/components/scan";
 import {
   FineTune,
   FramingEditor,
@@ -38,14 +36,16 @@ import {
   type FramingEdit,
 } from "@/components/framed-photo";
 import { useJournal, useJournalMutation } from "@/hooks/use-journal";
-import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
+import { useViewGuide } from "@/hooks/use-preferences";
 import { saveAlignment } from "@/lib/repository";
 import { requestDevMatch } from "@/lib/dev-analysis";
+import { POINT_TOLERANCE } from "@/lib/match";
 import { IDENTITY, framingOf } from "@/lib/framing";
-import { inspectPoints, pinPresets } from "@/lib/guide-art";
+import { inspectPoints, pinPresets, type PinPreset } from "@/lib/guide-art";
 import {
   MAX_PINS,
   fitToPins,
+  nextSpot,
   pairPins,
   pinAt,
   pinsFromMatch,
@@ -56,15 +56,23 @@ import type { Point } from "@/lib/outline";
 import { errorMessage, formatDate, type Photo } from "@/lib/model";
 
 const SEAM = 4;
+type Side = "before" | "after";
 
-/** Adjust a compared pair together, by moving both or by pinning features. */
+/**
+ * Adjust two photos of a view together: move both onto the guide as one,
+ * or each on its own, and pin features so one photo follows the other.
+ */
 export default function AdjustScreen() {
-  const params = useLocalSearchParams<{ before: string; after: string }>();
+  const params = useLocalSearchParams<{
+    /** The photo the other is lined up to; it only moves when you move it. */
+    ref: string;
+    /** The photo being lined up; pins move it onto `ref`. */
+    id: string;
+  }>();
   const journal = useJournal();
-  const found = [params.before, params.after]
-    .map((id) => journal.data?.photos.find((p) => p.id === id))
-    .filter((p): p is Photo => Boolean(p))
-    .sort((a, b) => a.taken_at.localeCompare(b.taken_at));
+  const photos = journal.data?.photos ?? [];
+  const reference = photos.find((p) => p.id === params.ref);
+  const photo = photos.find((p) => p.id === params.id);
   return (
     <Screen>
       <Stack.Screen options={{ title: "Adjust pair" }} />
@@ -73,89 +81,92 @@ export default function AdjustScreen() {
         error={journal.error}
         retry={() => void journal.refetch()}
       />
-      {found.length < 2 && !journal.isPending && !journal.error && (
+      {(!reference || !photo) && !journal.isPending && !journal.error && (
         <Empty icon="photos" title="Photos not found" />
       )}
-      {found.length === 2 && (
+      {reference && photo && (
         <Adjust
-          key={`${found[0].id}-${found[1].id}`}
-          before={found[0]}
-          after={found[1]}
+          key={`${reference.id}-${photo.id}`}
+          reference={reference}
+          photo={photo}
         />
       )}
     </Screen>
   );
 }
 
-function Adjust({ before, after }: { before: Photo; after: Photo }) {
-  const view = after.view;
+function Adjust({ reference, photo }: { reference: Photo; photo: Photo }) {
+  const view = photo.view;
+  // Shown in date order; `moving` is the side the pins move.
+  const earlier = reference.taken_at <= photo.taken_at;
+  const shown: Record<Side, Photo> = earlier
+    ? { before: reference, after: photo }
+    : { before: photo, after: reference };
+  const moving: Side = earlier ? "after" : "before";
+  const fixed: Side = moving === "after" ? "before" : "after";
   const { width, height } = useWindowDimensions();
-  const { preferences } = usePreferences();
-  const turn = preferences.turns[view] ?? 0;
-  const guide = guideStyleOf(preferences, view);
+  const { turn, style: guide, turnGuide } = useViewGuide(view);
   const paneHeight = Math.round(
-    Math.max(200, Math.min(Math.min(width, 560) - 32, (height - 380) / 2)),
+    Math.max(200, Math.min(Math.min(width, 560) - 32, (height - 420) / 2)),
   );
   const start = {
-    before: framingOf(before) ?? IDENTITY,
-    after: framingOf(after) ?? IDENTITY,
+    before: framingOf(shown.before) ?? IDENTITY,
+    after: framingOf(shown.after) ?? IDENTITY,
   };
-  const edits: Record<"before" | "after", FramingEdit> = {
+  const edits: Record<Side, FramingEdit> = {
     before: useFramingEdit(start.before),
     after: useFramingEdit(start.after),
   };
   const [firstPins] = useState(() =>
     pairPins(
-      before,
+      shown.before,
       start.before,
-      framingOf(before)?.pins ?? [],
-      after,
+      framingOf(shown.before)?.pins ?? [],
+      shown.after,
       start.after,
-      framingOf(after)?.pins ?? [],
+      framingOf(shown.after)?.pins ?? [],
     ),
   );
   const [pins, setPins] = useState<PairPin[]>(firstPins);
+  const [together, setTogether] = useState(true);
+  const [active, setActive] = useState<Side>(moving);
   const [aiBusy, setAiBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const shown = { before, after };
 
-  // The after photo follows its pins onto the before photo's.
+  // The moving photo follows its pins onto the fixed photo's.
   function follow(next: PairPin[]) {
     setPins(next);
     if (!next.length) return;
     snapFraming(
-      edits.after,
+      edits[moving],
       fitToPins(
-        before,
-        settledFraming(edits.before),
-        after,
-        settledFraming(edits.after),
-        next,
+        shown[fixed],
+        settledFraming(edits[fixed]),
+        shown[moving],
+        settledFraming(edits[moving]),
+        next.map((p) => ({ ...p, before: p[fixed], after: p[moving] })),
       ),
     );
   }
-  function move(side: "before" | "after", id: string, at: Point) {
+  function move(side: Side, id: string, at: Point) {
     follow(pins.map((p) => (p.id === id ? { ...p, [side]: at } : p)));
   }
-  const presets = pinPresets(view, guide);
-  function add(preset: (typeof presets)[number]) {
-    // A pin starts where the guide's picture shows the feature, in both photos.
-    const id =
-      preset.id === "spot"
-        ? `spot-${pins.filter((p) => p.id.startsWith("spot")).length + 1}`
-        : preset.id;
-    const name =
-      preset.id === "spot"
-        ? `Spot ${pins.filter((p) => p.id.startsWith("spot")).length + 1}`
-        : preset.name;
+  function add(preset: PinPreset) {
+    // A pin starts where the guide's picture shows the feature, in both
+    // photos. Spots step along a little so new ones don't stack.
+    const spot =
+      preset.id === "spot" ? nextSpot(pins, randomUUID().slice(0, 8)) : null;
+    const step = spot ? spot.n - 1 : 0;
+    const x = spot ? preset.x + ((step % 4) - 1.5) * 11 : preset.x;
+    const y = spot ? preset.y + Math.floor(step / 4) * 11 : preset.y;
     setPins([
       ...pins,
       {
-        id,
-        name,
-        before: pinAt(preset.x, preset.y, before, settledFraming(edits.before)),
-        after: pinAt(preset.x, preset.y, after, settledFraming(edits.after)),
+        id: spot?.id ?? preset.id,
+        name: spot?.name ?? preset.name,
+        before: pinAt(x, y, shown.before, settledFraming(edits.before)),
+        after: pinAt(x, y, shown.after, settledFraming(edits.after)),
       },
     ]);
     Haptics.selectionAsync().catch(() => {});
@@ -165,9 +176,14 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
     setMessage("");
     setError("");
     try {
-      const { result, sizes } = await requestDevMatch(before, after);
+      const { result, sizes } = await requestDevMatch(shown.before, shown.after);
       const found = result.same_area
-        ? pinsFromMatch(result.points, sizes, 0.05)
+        ? pinsFromMatch(
+            result.points,
+            sizes,
+            POINT_TOLERANCE,
+            `ai-${randomUUID().slice(0, 8)}`,
+          )
         : [];
       if (found.length < 2) {
         setMessage(
@@ -178,7 +194,7 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
       follow(found);
       snapFeedback();
       setMessage(
-        `Claude placed ${found.length} pins. Drag any that are off; the after photo follows.`,
+        `Claude placed ${found.length} pins. Drag any that are off; the ${moving} photo follows.`,
       );
     } catch (e) {
       setError(errorMessage(e));
@@ -187,19 +203,17 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
     }
   }
   function reset() {
-    loadFraming(edits.before, framingOf(before));
-    loadFraming(edits.after, framingOf(after));
+    loadFraming(edits.before, framingOf(shown.before));
+    loadFraming(edits.after, framingOf(shown.after));
     setPins(firstPins);
     setMessage("");
   }
   const save = useJournalMutation(async (owner: string) => {
-    const photoPins = (side: "before" | "after") =>
-      pins.map((p) => ({ id: p.id, name: p.name, ...p[side] }));
     for (const side of ["before", "after"] as const)
       await saveAlignment(owner, shown[side].id, {
         ...settledFraming(edits[side]),
         source: "manual",
-        pins: photoPins(side),
+        pins: pins.map((p) => ({ id: p.id, name: p.name, ...p[side] })),
       });
   });
   async function persist() {
@@ -213,20 +227,12 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
   }
 
   // Claude's look at both photos, shown as the scan over them.
-  const scanner = useScanner(aiBusy);
-  const speech = useLines(
-    matchLines(view, guide, formatDate(before.taken_at), true),
-    aiBusy,
-    { everyMs: 2200 },
+  const tour = useScanTour(
+    matchLines(view, guide, formatDate(shown[fixed].taken_at), true),
+    { scanning: aiBusy, points: inspectPoints(view, guide), everyMs: 2200 },
   );
-  const points = inspectPoints(view, guide);
-  const spot = points[speech.index % points.length];
-  const { look } = scanner;
-  useEffect(() => {
-    if (aiBusy) look(spot.x, spot.y);
-  }, [aiBusy, spot.x, spot.y, look]);
 
-  const available = presets.filter(
+  const available = pinPresets(view, guide).filter(
     (p) => p.id === "spot" || !pins.some((pin) => pin.id === p.id),
   );
   return (
@@ -237,15 +243,21 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
             key={side}
             photo={shown[side]}
             edit={edits[side]}
-            linked={edits[side === "before" ? "after" : "before"]}
+            linked={
+              together
+                ? edits[side === "before" ? "after" : "before"]
+                : undefined
+            }
             turn={turn}
             guide={guide}
             height={paneHeight}
+            active={!together && active === side}
+            onActivate={() => setActive(side)}
             overlay={(frameWidth) => (
               <>
                 {aiBusy && (
                   <ScanOverlay
-                    scanner={scanner}
+                    scanner={tour.scanner}
                     width={frameWidth}
                     height={paneHeight}
                     turn={turn}
@@ -273,25 +285,49 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
                     {formatDate(shown[side].taken_at)}
                   </Pill>
                 </View>
+                {side === "before" && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Turn guide"
+                    onPress={turnGuide}
+                    style={styles.round}
+                  >
+                    <Icon name="turn" size={18} color="#FFF" />
+                  </Pressable>
+                )}
               </>
             )}
           />
         ))}
-        {aiBusy && speech.line && (
+        {aiBusy && tour.line && (
           <View
             pointerEvents="none"
             style={[styles.voice, { bottom: paneHeight + SEAM / 2 - 22 }]}
           >
-            <AiBubble text={speech.line} thinking />
+            <AiBubble text={tour.line} thinking />
           </View>
         )}
       </View>
       <Card>
+        <Segmented
+          values={[
+            { value: "together", label: "Move together" },
+            { value: "apart", label: "Move separately" },
+          ]}
+          selected={together ? "together" : "apart"}
+          onChange={(value) => setTogether(value === "together")}
+        />
         <Text style={s.muted}>
-          Drag, pinch or twist either photo to move both onto the guide. Pins
-          mark the same spot in each photo: drag each onto it, and the after
-          photo follows.
+          {together
+            ? "Drag, pinch or twist either photo to move both onto the guide."
+            : "Drag, pinch or twist each photo on its own. The buttons move the outlined one."}{" "}
+          Pins mark the same spot in each photo: drag each onto it, and the{" "}
+          {moving} photo follows.
         </Text>
+        <FineTune
+          edit={edits[together ? fixed : active]}
+          linked={together ? edits[moving] : undefined}
+        />
         {pins.length > 0 && (
           <View style={s.wrap}>
             {pins.map((pin, i) => (
@@ -351,7 +387,6 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
             onPress={() => void aiPins()}
           />
         )}
-        <FineTune edit={edits.before} linked={edits.after} />
         <View style={s.wrap}>
           <Button
             label="Reset"
@@ -370,7 +405,8 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
         </View>
         {AI_MATCH && (
           <Text style={styles.small}>
-            AI pins send both photos to the developer analysis server.
+            AI pins replace your pins and send both photos to the developer
+            analysis server.
           </Text>
         )}
       </Card>
@@ -382,6 +418,19 @@ function Adjust({ before, after }: { before: Photo; after: Photo }) {
 
 const styles = StyleSheet.create({
   tag: { position: "absolute", top: 10, left: 10 },
+  round: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,26,23,0.6)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)",
+  },
   voice: {
     position: "absolute",
     left: 12,

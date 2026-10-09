@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { IDENTITY, type Similarity } from "./alignment/transform";
 import { photoToGuide, type Point } from "./outline";
-import { fitToPins, pairPins, pinAt, pinsFromMatch, type PairPin } from "./pins";
+import { fitToPins, nextSpot, pairPins, pinAt, pinsFromMatch, type PairPin } from "./pins";
 
 const before = { width: 600, height: 800 };
 const after = { width: 800, height: 600 };
@@ -80,8 +80,20 @@ describe("pinsFromMatch", () => {
       [100, 100], [400, 120], [300, 500], [150, 650], [480, 600],
     ].map(([x, y], i) => ({ feature: `spot ${i}`, a: { x, y }, b: { x: x + 40, y } }));
     points.push({ feature: "a mistake", a: { x: 200, y: 200 }, b: { x: 500, y: 700 } });
-    const pins = pinsFromMatch(points, sizes, 0.05);
+    const pins = pinsFromMatch(points, sizes, 0.05, "ai-x");
     expect(pins.map((p) => p.name)).toEqual(["Spot 0", "Spot 1", "Spot 2", "Spot 3", "Spot 4"]);
+    expect(pins[0].id).toBe("ai-x-1");
     expect(pins[0].before).toEqual({ x: 100 / 576, y: 100 / 768 });
+  });
+});
+
+describe("nextSpot", () => {
+  test("never repeats an id or a name after a spot is removed", () => {
+    const one = nextSpot([], "a");
+    const two = nextSpot([one], "b");
+    // Spot 1 removed: the next is Spot 3, not a second Spot 2.
+    const three = nextSpot([two], "c");
+    expect([one.name, two.name, three.name]).toEqual(["Spot 1", "Spot 2", "Spot 3"]);
+    expect(new Set([one.id, two.id, three.id]).size).toBe(3);
   });
 });

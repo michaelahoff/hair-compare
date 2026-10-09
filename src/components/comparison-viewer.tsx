@@ -14,17 +14,18 @@ import { ChangeExplainer } from "./change-explainer";
 import { ChangeOverlay } from "./change-overlay";
 import { Slider } from "./slider";
 import { FramedPhoto, snapFeedback } from "./framed-photo";
-import { AiBubble, ScanOverlay, useLines, useScanner } from "./scan";
+import { AiBubble, ScanOverlay, useScanTour } from "./scan";
 import { ScanOutlines, type InspectShape } from "./scan-outlines";
 import { AI_MATCH, MatchChoices } from "./match-choices";
 import { useChangeMap } from "@/hooks/use-change-map";
 import { useAccount, useJournalMutation } from "@/hooks/use-journal";
-import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
+import { useViewGuide } from "@/hooks/use-preferences";
 import {
-  matchWithClaude,
+  isLiningUp,
   useAutoLineUp,
   useLineUpState,
 } from "@/hooks/use-auto-line-up";
+import { matchWithClaude } from "@/lib/match";
 import { analyzePhoto } from "@/lib/repository";
 import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
 import { IDENTITY, framingOf } from "@/lib/framing";
@@ -34,7 +35,8 @@ import {
   contextLines,
   matchLines,
   resultLines,
-  type Said,
+  verdictText,
+  type BubbleLine,
 } from "@/lib/scan-script";
 import {
   VIEW_LABELS,
@@ -42,6 +44,7 @@ import {
   errorMessage,
   formatDate,
   photoMeta,
+  shortDate,
   type Analysis,
   type Photo,
   type Treatment,
@@ -64,14 +67,6 @@ function Labels({ photo, label }: { photo: Photo; label: string }) {
         <Pill tone="dark">{photoMeta(photo, false)}</Pill>
       </View>
     </>
-  );
-}
-
-/** "Feb 14", with the year when the photos are in different years. */
-function changeDate(taken: string, withYear: boolean) {
-  return new Date(`${taken.slice(0, 10)}T12:00:00`).toLocaleDateString(
-    undefined,
-    { month: "short", day: "numeric", year: withYear ? "numeric" : undefined },
   );
 }
 
@@ -151,7 +146,7 @@ function PhotoPane({
               view={photo.view}
               turn={turn}
               size={Math.min(width, height)}
-              style={guide}
+              variant={guide}
             />
           )}
         </View>
@@ -243,9 +238,7 @@ export function ComparisonViewer({
 }) {
   const view = after.view;
   const { owner } = useAccount();
-  const { preferences } = usePreferences();
-  const turn = preferences.turns[view] ?? 0;
-  const guideStyle = guideStyleOf(preferences, view);
+  const { turn, style: guideStyle } = useViewGuide(view);
   const [grid, setGrid] = useState(false);
   const [guide, setGuide] = useState(false);
   const [change, setChange] = useState(Boolean(changeRequest));
@@ -282,7 +275,7 @@ export function ComparisonViewer({
   const other = target === after ? before : after;
   const matching =
     aiBusy ||
-    Object.values(states).some((st) => st === "queued" || st === "matching");
+    Object.values(states).some(isLiningUp);
   const missed =
     !framed &&
     !matching &&
@@ -324,7 +317,7 @@ export function ComparisonViewer({
   function adjust() {
     router.push({
       pathname: "/adjust",
-      params: { before: before.id, after: after.id },
+      params: { ref: before.id, id: after.id },
     });
   }
 
@@ -357,7 +350,7 @@ export function ComparisonViewer({
         ? "result"
         : null;
   const texture = changeMap.result?.map;
-  const lines: Said[] = useMemo(() => {
+  const lines: BubbleLine[] = useMemo(() => {
     if (mode === "match")
       return matchLines(
         view,
@@ -382,21 +375,14 @@ export function ComparisonViewer({
     texture,
     pairAnalysis,
   ]);
-  const speech = useLines(lines, Boolean(mode), {
+  const { scanner, ...speech } = useScanTour(lines, {
+    scanning: mode === "match" || mode === "analyze",
+    speaking: Boolean(mode),
+    points: inspectPoints(view, guideStyle),
     everyMs: mode === "result" ? 4600 : 2400,
     loop: mode !== "result",
     restart: replay,
   });
-  const scanner = useScanner(mode === "match" || mode === "analyze");
-  const points = useMemo(
-    () => inspectPoints(view, guideStyle),
-    [view, guideStyle],
-  );
-  const spot = points[speech.index % points.length];
-  const { look } = scanner;
-  useEffect(() => {
-    if (mode === "match" || mode === "analyze") look(spot.x, spot.y);
-  }, [mode, spot, look]);
 
   // What the analysis inspected, on the guide, so it lands on both photos.
   const shapes: InspectShape[] = useMemo(() => {
@@ -431,7 +417,7 @@ export function ComparisonViewer({
 
   const withYear = before.taken_at.slice(0, 4) !== after.taken_at.slice(0, 4);
   const [fromDate, toDate] = [before, after].map((p) =>
-    changeDate(p.taken_at, withYear),
+    shortDate(p.taken_at, withYear),
   );
   const verdict = pairAnalysis?.result.change_since_previous.assessment;
 
@@ -539,7 +525,7 @@ export function ComparisonViewer({
           {framed && (
             <View style={styles.inline}>
               <Text style={[s.muted, { flexShrink: 1 }]}>
-                Both photos sit on the guide.
+                The photos are lined up.
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -601,13 +587,7 @@ export function ComparisonViewer({
           {framed && pairAnalysis && !analyzing && (
             <View style={styles.inline}>
               <Text style={[s.body, { flexShrink: 1, fontWeight: "700" }]}>
-                {verdict === "improved"
-                  ? "Looks better"
-                  : verdict === "worse"
-                    ? "Looks thinner"
-                    : verdict === "stable"
-                      ? "About the same"
-                      : "Too close to call"}
+                {verdict && verdictText(verdict)}
                 <Text style={s.muted}>
                   {"  "}
                   {pairAnalysis.result.confidence} confidence

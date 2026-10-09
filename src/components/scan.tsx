@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
@@ -14,6 +14,8 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { colors } from "./ui";
+import { useLines } from "@/hooks/use-lines";
+import { guideToFrame } from "@/lib/framing";
 
 /** The scanner's glow: a light green that reads over skin and dark hair. */
 export const SCAN = "#7CF2B6";
@@ -64,35 +66,46 @@ export function useScanner(active: boolean): Scanner & {
       beam.set(0.5);
     }
   }, [active, reduced, beam, on]);
-  return {
-    beam,
-    fx,
-    fy,
-    on,
-    look: (x, y) => {
+  const look = useCallback(
+    (x: number, y: number) => {
       fx.set(withSpring(x, { duration: 700, dampingRatio: 0.8 }));
       fy.set(withSpring(y, { duration: 700, dampingRatio: 0.8 }));
     },
-  };
+    [fx, fy],
+  );
+  return { beam, fx, fy, on, look };
 }
 
-/** Guide units to the frame's pixels, turned like the guide. */
-function toFrame(
-  x: number,
-  y: number,
-  turn: number,
-  size: number,
-  width: number,
-  height: number,
+/**
+ * A scan with commentary: the scanner, and the bubble's lines stepping on
+ * while the reticle hops from one of `points` to the next with them.
+ * `speaking` keeps the lines going after the scan stops, e.g. for findings.
+ */
+export function useScanTour<T>(
+  lines: T[],
+  {
+    scanning,
+    speaking = scanning,
+    points,
+    ...timing
+  }: {
+    scanning: boolean;
+    speaking?: boolean;
+    /** Where to look, in guide units (0 to 100, unturned). */
+    points: readonly { x: number; y: number }[];
+    everyMs?: number;
+    loop?: boolean;
+    restart?: unknown;
+  },
 ) {
-  "worklet";
-  const angle = (turn * Math.PI) / 2;
-  const dx = (x - 50) / 100;
-  const dy = (y - 50) / 100;
-  return {
-    x: width / 2 + (Math.cos(angle) * dx - Math.sin(angle) * dy) * size,
-    y: height / 2 + (Math.sin(angle) * dx + Math.cos(angle) * dy) * size,
-  };
+  const scanner = useScanner(scanning);
+  const speech = useLines(lines, speaking, timing);
+  const spot = points[speech.index % points.length];
+  const { look } = scanner;
+  useEffect(() => {
+    if (scanning && spot) look(spot.x, spot.y);
+  }, [scanning, spot, look]);
+  return { scanner, ...speech };
 }
 
 /**
@@ -123,9 +136,9 @@ export function ScanOverlay({
     transform: [{ scale: 1.12 - 0.12 * scanner.on.get() }],
   }));
   const reticleStyle = useAnimatedStyle(() => {
-    const at = toFrame(
-      scanner.fx.get(),
-      scanner.fy.get(),
+    const at = guideToFrame(
+      scanner.fx.get() / 100 - 0.5,
+      scanner.fy.get() / 100 - 0.5,
       turn,
       size,
       width,
@@ -384,42 +397,3 @@ const styles = StyleSheet.create({
   },
   orbStar: { color: SCAN, fontSize: 15, fontWeight: "800" },
 });
-
-/**
- * Steps through `lines` every `everyMs` while `playing`, looping or stopping
- * at the last. Starts over whenever what the lines say, or `restart`, changes.
- */
-export function useLines<T>(
-  lines: T[],
-  playing: boolean,
-  {
-    everyMs = 2600,
-    loop = true,
-    restart,
-  }: { everyMs?: number; loop?: boolean; restart?: unknown } = {},
-) {
-  const [index, setIndex] = useState(0);
-  // By content, so lines rebuilt on every render don't keep starting over.
-  const said = JSON.stringify(lines);
-  const [shown, setShown] = useState({ said, restart });
-  if (shown.said !== said || shown.restart !== restart) {
-    setShown({ said, restart });
-    setIndex(0);
-  }
-  const count = lines.length;
-  useEffect(() => {
-    if (!playing || count < 2) return;
-    const timer = setInterval(
-      () =>
-        setIndex((i) => (loop ? (i + 1) % count : Math.min(i + 1, count - 1))),
-      everyMs,
-    );
-    return () => clearInterval(timer);
-  }, [playing, said, count, everyMs, loop]);
-  const at = Math.min(index, Math.max(0, lines.length - 1));
-  return {
-    line: lines[at] as T | undefined,
-    index: at,
-    next: () => setIndex((i) => (i + 1) % Math.max(1, lines.length)),
-  };
-}

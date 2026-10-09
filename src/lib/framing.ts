@@ -102,3 +102,71 @@ export function framedTransform(
 }
 
 export { IDENTITY };
+
+/**
+ * `target` as the angle nearest `current`, so an animation between them turns
+ * the short way round rather than unwinding whole turns.
+ */
+export function nearestTurn(current: number, target: number) {
+  "worklet";
+  return target + Math.round((current - target) / (2 * Math.PI)) * 2 * Math.PI;
+}
+
+/** A photo fraction in guide units (centred, side 1), through its framing. */
+export function photoPointToGuide(
+  x: number,
+  y: number,
+  base: { width: number; height: number },
+  framing: Similarity,
+) {
+  "worklet";
+  const px = (x - 0.5) * base.width;
+  const py = (y - 0.5) * base.height;
+  const c = Math.cos(framing.rotation) * framing.scale;
+  const s = Math.sin(framing.rotation) * framing.scale;
+  return { x: c * px - s * py + framing.tx, y: s * px + c * py + framing.ty };
+}
+
+/**
+ * Guide units to a frame's pixels: turned `turn` quarter turns, on a guide
+ * square of side `size` centred in a `width` × `height` frame.
+ */
+export function guideToFrame(
+  x: number,
+  y: number,
+  turn: number,
+  size: number,
+  width: number,
+  height: number,
+) {
+  "worklet";
+  const angle = (turn * Math.PI) / 2;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return {
+    x: width / 2 + (c * x - s * y) * size,
+    y: height / 2 + (s * x + c * y) * size,
+  };
+}
+
+/** A movement across a frame, in pixels, as a movement in the photo's fractions. */
+export function frameDeltaToPhoto(
+  dx: number,
+  dy: number,
+  turn: number,
+  size: number,
+  base: { width: number; height: number },
+  framing: Similarity,
+) {
+  "worklet";
+  // Undo the guide's turn, then the framing's turn and scale.
+  const angle = (-turn * Math.PI) / 2;
+  const gx = (Math.cos(angle) * dx - Math.sin(angle) * dy) / size;
+  const gy = (Math.sin(angle) * dx + Math.cos(angle) * dy) / size;
+  const c = Math.cos(-framing.rotation) / framing.scale;
+  const s = Math.sin(-framing.rotation) / framing.scale;
+  return {
+    x: (c * gx - s * gy) / base.width,
+    y: (s * gx + c * gy) / base.height,
+  };
+}

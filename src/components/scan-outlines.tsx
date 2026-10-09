@@ -10,7 +10,9 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import Svg, { Path } from "react-native-svg";
+import { guideToFrame } from "@/lib/framing";
 import { resample, type Point } from "@/lib/outline";
+import type { ScalpArea, Severity } from "@/lib/model";
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const LABEL = 180;
@@ -18,7 +20,7 @@ const DRAW_MS = 900;
 /** Each outline starts drawing this far into the one before it. */
 const STAGGER = 0.55;
 
-export const SEVERITY_COLOR: Record<string, string> = {
+export const SEVERITY_COLOR: Record<Severity, string> = {
   none: "#7CF2B6",
   mild: "#F2D86B",
   moderate: "#F29A4A",
@@ -28,27 +30,10 @@ export const SEVERITY_COLOR: Record<string, string> = {
 /** A region to draw, in guide units centred on the guide square (side 1). */
 export type InspectShape = {
   key: string;
-  area: string;
-  severity: string;
+  area: ScalpArea;
+  severity: Severity;
   points: Point[];
 };
-
-/** Guide units to frame pixels, with the view's turn. */
-function place(
-  points: Point[],
-  turn: number,
-  size: number,
-  width: number,
-  height: number,
-) {
-  const angle = (turn * Math.PI) / 2;
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  return points.map((p) => ({
-    x: width / 2 + (c * p.x - s * p.y) * size,
-    y: height / 2 + (s * p.x + c * p.y) * size,
-  }));
-}
 
 function path(points: Point[]) {
   return (
@@ -85,7 +70,7 @@ export function ScanOutlines({
   width: number;
   height: number;
   turn: number;
-  focus?: string | null;
+  focus?: ScalpArea | null;
   drawKey?: string;
 }) {
   const reduced = useReducedMotion();
@@ -107,12 +92,8 @@ export function ScanOutlines({
   const drawn = useMemo(
     () =>
       shapes.map((shape) => {
-        const points = place(
-          resample(shape.points, 32),
-          turn,
-          size,
-          width,
-          height,
+        const points = resample(shape.points, 32).map((p) =>
+          guideToFrame(p.x, p.y, turn, size, width, height),
         );
         const top = points.reduce((a, b) => (b.y < a.y ? b : a));
         return { ...shape, d: path(points), length: perimeter(points), top };
@@ -127,7 +108,7 @@ export function ScanOutlines({
             key={shape.key}
             d={shape.d}
             length={shape.length}
-            color={SEVERITY_COLOR[shape.severity] ?? SEVERITY_COLOR.none}
+            color={SEVERITY_COLOR[shape.severity]}
             index={i}
             progress={progress}
             dim={Boolean(focus) && focus !== shape.area}
@@ -140,7 +121,7 @@ export function ScanOutlines({
           at={shape.top}
           width={width}
           text={`${shape.area.replaceAll("_", " ")} · ${shape.severity}`}
-          color={SEVERITY_COLOR[shape.severity] ?? SEVERITY_COLOR.none}
+          color={SEVERITY_COLOR[shape.severity]}
           index={i}
           progress={progress}
           dim={Boolean(focus) && focus !== shape.area}

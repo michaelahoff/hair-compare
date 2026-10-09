@@ -31,6 +31,23 @@ async function read(): Promise<Preferences> {
   return value ? { ...DEFAULTS, ...JSON.parse(value) } : DEFAULTS;
 }
 
+/** How a view's guide is shown, and the controls that change it. */
+export function useViewGuide(view: ScalpView) {
+  const { preferences, update } = usePreferences();
+  const turn = preferences.turns[view] ?? 0;
+  return {
+    turn,
+    style: guideStyleOf(preferences, view),
+    turnGuide: () =>
+      update((p) => ({
+        ...p,
+        turns: { ...p.turns, [view]: (turn + 1) % 4 },
+      })),
+    setStyle: (style: GuideStyle) =>
+      update((p) => ({ ...p, guides: { ...p.guides, [view]: style } })),
+  };
+}
+
 export function usePreferences() {
   const cache = useQueryClient();
   const query = useQuery({

@@ -1,99 +1,21 @@
 import { useState, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useAccount } from "./use-journal";
-import { alignPhotos } from "@/lib/photos";
-import { requestDevMatch } from "@/lib/dev-analysis";
-import { robustSimilarity } from "@/lib/alignment/points";
 import { readJournal, saveAlignment } from "@/lib/repository";
-import {
-  IDENTITY,
-  chainFraming,
-  framingOf,
-  type Framing,
-} from "@/lib/framing";
+import { IDENTITY, framingOf, type Framing } from "@/lib/framing";
+import { matchFraming, referenceFor } from "@/lib/match";
 import type { Journal, Photo } from "@/lib/model";
-import { MIN_MATCH, type Similarity } from "@/lib/alignment";
-
-/**
- * Frame `target` from an already-framed `reference` of the same view by
- * matching their details. Null when no trustworthy match is found; throws
- * when the photos can't be read.
- */
-export async function matchFraming(
-  reference: Photo,
-  referenceFraming: Similarity,
-  target: Photo,
-): Promise<Similarity | null> {
-  const result = await alignPhotos(reference.uri, target.uri);
-  if (result.score < MIN_MATCH) return null;
-  return chainFraming(reference, referenceFraming, target, result.transform);
-}
-
-/** Pairs must agree to within this share of the photo's width. */
-const POINT_TOLERANCE = 0.05;
-/** Fewest agreeing pairs, and their largest typical miss, to trust a fit. */
-const MIN_POINTS = 3;
-const MAX_POINT_MISS = 0.03;
-/** How far the fitted turn may stray from the turn the model reported. */
-const MAX_TURN_DISAGREEMENT = (30 * Math.PI) / 180;
-
-/**
- * Frame `target` from `reference` using the spots the developer server's
- * model finds in both. Null when it finds too few, or they don't agree.
- */
-export async function matchWithClaude(
-  reference: Photo,
-  referenceFraming: Similarity,
-  target: Photo,
-): Promise<Similarity | null> {
-  const { result, sizes } = await requestDevMatch(reference, target);
-  if (!result.same_area) return null;
-  // Into each photo's own normalised coordinates (see alignment/transform).
-  const normal = (p: { x: number; y: number }, size: typeof sizes.a) =>
-    [
-      (p.x - (size.width - 1) / 2) / size.width,
-      (p.y - (size.height - 1) / 2) / size.width,
-    ] as [number, number];
-  const fit = robustSimilarity(
-    result.points.map((p) => ({
-      a: normal(p.a, sizes.a),
-      b: normal(p.b, sizes.b),
-    })),
-    POINT_TOLERANCE,
-  );
-  if (!fit || fit.inliers < MIN_POINTS || fit.rms > MAX_POINT_MISS) return null;
-  const said = (result.rotation_deg * Math.PI) / 180;
-  const turn = Math.atan2(
-    Math.sin(fit.transform.rotation - said),
-    Math.cos(fit.transform.rotation - said),
-  );
-  if (Math.abs(turn) > MAX_TURN_DISAGREEMENT) return null;
-  return chainFraming(reference, referenceFraming, target, fit.transform);
-}
-
-/**
- * The photo to line `photo` up from: the nearest-dated photo of its view
- * placed by hand, else the nearest-dated matched one. Errors would compound
- * through matched ones, so hand-placed photos come first.
- */
-export function referenceFor(photo: Photo, photos: Photo[]) {
-  const framed = photos.filter(
-    (p) => p.id !== photo.id && p.view === photo.view && framingOf(p),
-  );
-  const manual = framed.filter((p) => framingOf(p)?.source !== "auto");
-  const at = Date.parse(photo.taken_at);
-  const distance = (p: Photo) => Math.abs(Date.parse(p.taken_at) - at);
-  return (manual.length ? manual : framed).reduce<Photo | undefined>(
-    (best, p) => (!best || distance(p) < distance(best) ? p : best),
-    undefined,
-  );
-}
+import type { Similarity } from "@/lib/alignment";
 
 /**
  * Where a photo is in automatic line-up. A photo with nothing to match
  * against has no state.
  */
 export type LineUpState = "queued" | "matching" | "lined" | "missed";
+
+/** Waiting to be matched, or being matched now. */
+export const isLiningUp = (state: LineUpState | undefined) =>
+  state === "queued" || state === "matching";
 
 // One queue for the whole app: matching is CPU-bound, and a line-up started
 // on one screen carries on after it closes.

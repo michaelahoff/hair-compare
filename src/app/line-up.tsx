@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -19,12 +19,7 @@ import {
 } from "@/components/ui";
 import { JournalState } from "@/components/journal-state";
 import { AI_MATCH, MatchChoices } from "@/components/match-choices";
-import {
-  AiBubble,
-  ScanOverlay,
-  useLines,
-  useScanner,
-} from "@/components/scan";
+import { AiBubble, ScanOverlay, useScanTour } from "@/components/scan";
 import {
   FineTune,
   FramingEditor,
@@ -34,14 +29,10 @@ import {
   useFramingEdit,
 } from "@/components/framed-photo";
 import { useJournal, useJournalMutation } from "@/hooks/use-journal";
-import { guideStyleOf, usePreferences } from "@/hooks/use-preferences";
+import { useViewGuide } from "@/hooks/use-preferences";
 import { timelineOf } from "@/hooks/use-comparison";
-import {
-  matchFraming,
-  matchWithClaude,
-  referenceFor,
-  useAutoLineUp,
-} from "@/hooks/use-auto-line-up";
+import { useAutoLineUp } from "@/hooks/use-auto-line-up";
+import { matchFraming, matchWithClaude, referenceFor } from "@/lib/match";
 import { saveAlignment } from "@/lib/repository";
 import { CLOSEUP_VIEWS, inspectPoints } from "@/lib/guide-art";
 import { matchLines } from "@/lib/scan-script";
@@ -50,11 +41,7 @@ import { VIEW_LABELS, errorMessage, formatDate, type Photo } from "@/lib/model";
 
 /** Line one photo up against its view's guide. */
 export default function LineUpScreen() {
-  const { id, against } = useLocalSearchParams<{
-    id: string;
-    /** A photo to match against, e.g. the other photo of a compared pair. */
-    against?: string;
-  }>();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const journal = useJournal();
   const photo = journal.data?.photos.find((p) => p.id === id);
   return (
@@ -74,7 +61,7 @@ export default function LineUpScreen() {
       {!photo && !journal.isPending && !journal.error && (
         <Empty icon="photos" title="Photo not found" />
       )}
-      {photo && <LineUp key={photo.id} photo={photo} against={against} />}
+      {photo && <LineUp key={photo.id} photo={photo} />}
     </Screen>
   );
 }
@@ -85,16 +72,14 @@ export default function LineUpScreen() {
  */
 type Phase = "matching" | "ai" | "matched" | "missed" | "choose" | "hand";
 
-function LineUp({ photo, against }: { photo: Photo; against?: string }) {
+function LineUp({ photo }: { photo: Photo }) {
   const id = photo.id;
   const journal = useJournal();
-  const { preferences, update } = usePreferences();
+  const { turn, style: guide, turnGuide, setStyle } = useViewGuide(photo.view);
   const { width, height } = useWindowDimensions();
   const edit = useFramingEdit(framingOf(photo));
   const timeline = timelineOf(journal.data?.photos ?? [], photo.view);
-  const reference =
-    timeline.find((p) => p.id === against && p.id !== id && framingOf(p)) ??
-    referenceFor(photo, timeline);
+  const reference = referenceFor(photo, timeline);
   // An unframed photo with something to match against matches straight away.
   const [phase, setPhase] = useState<Phase>(
     !framingOf(photo) && reference ? "matching" : "hand",
@@ -109,27 +94,23 @@ function LineUp({ photo, against }: { photo: Photo; against?: string }) {
   );
   const autoLineUp = useAutoLineUp();
   const unframed = timeline.filter((p) => p.id !== id && !framingOf(p)).length;
-  const turn = preferences.turns[photo.view] ?? 0;
-  const guide = guideStyleOf(preferences, photo.view);
+  // Switching pictures changes what "lined up" means, so it's chosen before a
+  // view has lined-up photos: ones placed on each picture wouldn't line up.
+  const pickGuide =
+    CLOSEUP_VIEWS.includes(photo.view) &&
+    timeline.every((p) => p.id === id || !framingOf(p));
   const size = Math.round(Math.min(Math.min(width, 560) - 32, height * 0.58));
   const scanning = phase === "matching" || phase === "ai";
-  const scanner = useScanner(scanning);
   const date = reference ? formatDate(reference.taken_at) : null;
-  const lines = useMemo(
-    () => matchLines(photo.view, guide, date, phase === "ai"),
-    [photo.view, guide, date, phase],
-  );
-  const speech = useLines(lines, scanning, { everyMs: 1900 });
   // The reticle hops from landmark to landmark while it looks.
-  const points = useMemo(
-    () => inspectPoints(photo.view, guide),
-    [photo.view, guide],
+  const tour = useScanTour(
+    matchLines(photo.view, guide, date, phase === "ai"),
+    {
+      scanning,
+      points: inspectPoints(photo.view, guide),
+      everyMs: 1900,
+    },
   );
-  const spot = points[speech.index % points.length];
-  const { look } = scanner;
-  useEffect(() => {
-    if (scanning) look(spot.x, spot.y);
-  }, [scanning, spot, look]);
 
   async function match(withClaude: boolean) {
     if (!reference) return;
@@ -216,20 +197,20 @@ function LineUp({ photo, against }: { photo: Photo; against?: string }) {
           <>
             {scanning && (
               <ScanOverlay
-                scanner={scanner}
+                scanner={tour.scanner}
                 width={frameWidth}
                 height={size}
                 turn={turn}
               />
             )}
-            {scanning && speech.line && (
+            {scanning && tour.line && (
               <View pointerEvents="none" style={styles.voice}>
-                <AiBubble text={speech.line} thinking />
+                <AiBubble text={tour.line} thinking />
               </View>
             )}
             {!scanning && (
               <View style={styles.corner}>
-                {CLOSEUP_VIEWS.includes(photo.view) && (
+                {pickGuide && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={
@@ -238,13 +219,7 @@ function LineUp({ photo, against }: { photo: Photo; against?: string }) {
                         : "Use the close-up guide"
                     }
                     onPress={() =>
-                      update((p) => ({
-                        ...p,
-                        guides: {
-                          ...p.guides,
-                          [photo.view]: guide === "closeup" ? "head" : "closeup",
-                        },
-                      }))
+                      setStyle(guide === "closeup" ? "head" : "closeup")
                     }
                     style={styles.chip}
                   >
@@ -256,12 +231,7 @@ function LineUp({ photo, against }: { photo: Photo; against?: string }) {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Turn guide"
-                  onPress={() =>
-                    update((p) => ({
-                      ...p,
-                      turns: { ...p.turns, [photo.view]: (turn + 1) % 4 },
-                    }))
-                  }
+                  onPress={turnGuide}
                   style={styles.round}
                 >
                   <Icon name="turn" size={18} color="#FFF" />
@@ -359,7 +329,7 @@ function LineUp({ photo, against }: { photo: Photo; against?: string }) {
                   onPress={() =>
                     router.push({
                       pathname: "/adjust",
-                      params: { before: reference.id, after: photo.id },
+                      params: { ref: reference.id, id: photo.id },
                     })
                   }
                   style={styles.link}

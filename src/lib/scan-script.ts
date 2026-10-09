@@ -4,25 +4,19 @@
  *
  * Pure functions with no React or Expo imports, so they run under `bun test`.
  */
-import type { GuideStyle } from "./guide-art";
+import { guideLandmarks, type GuideStyle } from "./guide-art";
 import {
   elapsedDays,
+  shortDate,
   type Photo,
   type ScalpAnalysis,
+  type ScalpArea,
   type ScalpView,
   type Treatment,
 } from "./model";
 
-/** A line, and the area it is about when the outlines should point at one. */
-export type Said = { text: string; area?: string };
-
-const LANDMARKS: Record<ScalpView, string> = {
-  top: "the whorl, ears and hairline",
-  crown: "the whorl and the outline of your head",
-  hairline: "your hairline and brows",
-  left_temple: "your temple and sideburn",
-  right_temple: "your temple and sideburn",
-};
+/** What the bubble says, and the area it's about when the outlines should point at one. */
+export type BubbleLine = { text: string; area?: ScalpArea };
 
 /** While a photo is being matched to another, pixel by pixel or by Claude. */
 export function matchLines(
@@ -31,8 +25,7 @@ export function matchLines(
   against: string | null,
   ai: boolean,
 ): string[] {
-  const landmarks =
-    style === "closeup" ? "the whorl and how the hair swirls" : LANDMARKS[view];
+  const landmarks = guideLandmarks(view, style);
   if (ai)
     return [
       "Claude is looking at both photos…",
@@ -48,12 +41,7 @@ export function matchLines(
   ];
 }
 
-function day(photo: Photo) {
-  return new Date(`${photo.taken_at.slice(0, 10)}T12:00:00`).toLocaleDateString(
-    undefined,
-    { month: "short", day: "numeric" },
-  );
-}
+const day = (photo: Photo) => shortDate(photo.taken_at);
 
 /**
  * While an analysis runs: the pair's dates, conditions that change how hair
@@ -64,9 +52,9 @@ export function contextLines(input: {
   after: Photo;
   treatments: Pick<Treatment, "name" | "started_on" | "ended_on">[];
   texture?: { gained: number; lost: number } | null;
-}): Said[] {
+}): BubbleLine[] {
   const { before, after, treatments, texture } = input;
-  const lines: Said[] = [
+  const lines: BubbleLine[] = [
     {
       text: `Comparing ${day(before)} with ${day(after)}: ${elapsedDays(before.taken_at, after.taken_at)} days apart.`,
     },
@@ -112,20 +100,26 @@ export function firstSentence(text: string, max = 160) {
     : sentence;
 }
 
-const VERDICT: Record<string, string> = {
+type Change = ScalpAnalysis["change_since_previous"]["assessment"];
+
+const VERDICT: Record<Change, string> = {
   improved: "Looks better",
   stable: "Looks about the same",
   worse: "Looks thinner",
   uncertain: "Too close to call",
+  no_previous: "Nothing earlier to compare with",
 };
 
+/** The analysis's call on the change, in a few words. */
+export const verdictText = (change: Change) => VERDICT[change];
+
 /** The finished analysis, read out: the verdict, each region, then the summary. */
-export function resultLines(result: ScalpAnalysis): Said[] {
+export function resultLines(result: ScalpAnalysis): BubbleLine[] {
   const change = result.change_since_previous;
-  const lines: Said[] = [];
+  const lines: BubbleLine[] = [];
   if (change.assessment !== "no_previous")
     lines.push({
-      text: `${VERDICT[change.assessment] ?? change.assessment}. ${firstSentence(change.explanation)}`,
+      text: `${verdictText(change.assessment)}. ${firstSentence(change.explanation)}`,
     });
   for (const region of result.regions)
     if (region.box || region.outline)

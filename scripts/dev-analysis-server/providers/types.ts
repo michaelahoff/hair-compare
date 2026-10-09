@@ -1,12 +1,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { AssessmentPart } from "../../../supabase/functions/_shared/assessment-prompt";
 
-type Run = (parts: AssessmentPart[], options: { model?: string }) => Promise<{ result: unknown; model: string }>;
+/** One structured request to the provider's model. */
+type ProviderCall = (parts: AssessmentPart[], options: { model?: string }) => Promise<{ result: unknown; model: string }>;
 
 export type Provider = {
-  analyze: Run;
+  analyze: ProviderCall;
   /** Corresponding points between two photos; absent where the provider can't do it yet. */
-  match?: Run;
+  match?: ProviderCall;
 };
 
 /** Photo matching needs precise pointing, so it runs on the default model unless overridden. */

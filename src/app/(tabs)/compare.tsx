@@ -229,13 +229,10 @@ export default function CompareScreen() {
         ? () => choose("after", afterIndex + 1)
         : undefined,
   };
-  // This pair's own analysis first, else the after photo's latest.
-  const afterAnalyses = (journal.data?.analyses ?? []).filter(
-    (a) => a.photo_id === after?.id,
-  );
-  const analysis =
-    afterAnalyses.filter((a) => a.previous_photo_id === before?.id).at(-1) ??
-    afterAnalyses.at(-1);
+  // Only this pair's own analysis: one against another photo would mislead.
+  const analysis = (journal.data?.analyses ?? [])
+    .filter((a) => a.photo_id === after?.id && a.previous_photo_id === before?.id)
+    .at(-1);
   const treatments = (journal.data?.treatments ?? []).filter(
     (t) =>
       before &&
