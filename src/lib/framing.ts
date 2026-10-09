@@ -32,13 +32,13 @@ export type Pin = { id: string; name: string; x: number; y: number };
  * either line up. Ignores legacy pair alignments (which carry `refPhotoId`).
  */
 export function framingOf(
-  photo: { alignment: unknown; view?: ScalpView },
+  photo: { alignment: unknown; view: ScalpView },
   variant: GuideStyle = "head",
 ): Framing | null {
   const value = photo.alignment as (Framing & { refPhotoId?: string }) | null;
   if (!value || value.refPhotoId !== undefined) return null;
   const from = value.guide ?? "head";
-  if (!photo.view || from === variant) return value;
+  if (from === variant) return value;
   const { guide: _placed, ...rest } = value;
   return {
     ...rest,

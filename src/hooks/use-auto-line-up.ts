@@ -2,7 +2,8 @@ import { useState, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { journalKey, useAccount } from "./use-journal";
 import { readJournal, saveAlignment } from "@/lib/repository";
-import { IDENTITY, framingOf, type Framing } from "@/lib/framing";
+import { IDENTITY, framingOf, placedOn, type Framing } from "@/lib/framing";
+import type { GuideStyle } from "@/lib/guide-art";
 import { matchFraming, referenceFor } from "@/lib/match";
 import type { Journal, Photo } from "@/lib/model";
 import type { Similarity } from "@/lib/alignment";
@@ -142,20 +143,24 @@ export function useAutoLineUp() {
   /**
    * Line up a compared pair. Each unframed photo is matched to the view's
    * lined-up photos; when the view has none, the first photo stays as it is
-   * and anchors the other.
+   * on `variant`, the picture shown, and anchors the other.
    */
-  async function pairUp(pair: Photo[], photos: Photo[]) {
+  async function pairUp(pair: Photo[], photos: Photo[], variant: GuideStyle) {
     const targets = pair.filter((p) => !framingOf(p) && !states.has(p.id));
     if (!targets.length) return;
     if (!photos.some((p) => framingOf(p))) {
       const [anchor] = targets;
-      await store(owner, cache, anchor.id, { ...IDENTITY, source: "auto" });
+      await store(owner, cache, anchor.id, {
+        ...IDENTITY,
+        source: "auto",
+        ...placedOn(anchor.view, variant),
+      });
       targets.shift();
     }
     await lineUp(targets.map((p) => p.id));
   }
   /** Keep a framing found another way, e.g. by Claude, snapping it into place. */
-  async function place(id: string, framing: Similarity) {
+  async function place(id: string, framing: Similarity | Framing) {
     await store(owner, cache, id, { ...framing, source: "auto" });
     setState(id, "lined");
   }

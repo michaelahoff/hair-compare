@@ -37,8 +37,10 @@ async function read(): Promise<Preferences> {
  * was placed on and is read on whichever one shows.
  */
 export function useViewGuide(view: ScalpView) {
-  const { preferences, update } = usePreferences();
+  const { preferences, ready, update } = usePreferences();
   return {
+    /** The stored choices have loaded; before then these are defaults. */
+    ready,
     turn: preferences.turns[view] ?? 0,
     variant: guideStyleOf(preferences, view),
     turnGuide: () =>

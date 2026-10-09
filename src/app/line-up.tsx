@@ -83,6 +83,7 @@ function LineUp({ photo }: { photo: Photo }) {
   const id = photo.id;
   const journal = useJournal();
   const {
+    ready,
     turn,
     variant: guide,
     turnGuide,
@@ -183,9 +184,10 @@ function LineUp({ photo }: { photo: Photo }) {
       setPhase("missed");
     }
   }
+  // Once the guide picture is known: the match is made and saved on it.
   const started = useRef(false);
   useEffect(() => {
-    if (started.current || phase !== "matching") return;
+    if (started.current || phase !== "matching" || !ready) return;
     started.current = true;
     void match(false);
   });

@@ -28,12 +28,8 @@ import {
 import { matchWithClaude } from "@/lib/match";
 import { analyzePhoto } from "@/lib/repository";
 import { DEV_ANALYSIS_URL } from "@/lib/dev-analysis";
-import { IDENTITY, framingOf } from "@/lib/framing";
-import {
-  guideCarry,
-  inspectPoints,
-  type GuideStyle,
-} from "@/lib/guide-art";
+import { IDENTITY, framingOf, placedOn } from "@/lib/framing";
+import { inspectPoints, type GuideStyle } from "@/lib/guide-art";
 import { photoToGuide, regionPolygon } from "@/lib/outline";
 import {
   contextLines,
@@ -80,7 +76,7 @@ function PhotoPane({
   zoom,
   grid,
   variant,
-  guide,
+  showGuide,
   overlay,
   height,
   label,
@@ -93,7 +89,7 @@ function PhotoPane({
   /** The view's guide picture, which the photo is shown on. */
   variant: GuideStyle;
   /** Draw that picture over the photo. */
-  guide: boolean;
+  showGuide: boolean;
   /** Drawn over the photo inside the zoom, given the frame's size. */
   overlay?: (width: number, height: number) => ReactNode;
   height: number;
@@ -149,7 +145,7 @@ function PhotoPane({
             onError={() => setFailed(true)}
           />
           {overlay?.(width, height)}
-          {guide && (
+          {showGuide && (
             <Guide
               view={photo.view}
               turn={turn}
@@ -295,8 +291,10 @@ export function ComparisonViewer({
   useEffect(() => {
     if (started.current === pair) return;
     started.current = pair;
-    pairUp([before, after], photos).catch((e) => setError(errorMessage(e)));
-  }, [pair, before, after, photos, pairUp]);
+    pairUp([before, after], photos, guideStyle).catch((e) =>
+      setError(errorMessage(e)),
+    );
+  }, [pair, before, after, photos, pairUp, guideStyle]);
 
   async function aiMatch() {
     if (!target) return;
@@ -305,9 +303,16 @@ export function ComparisonViewer({
     setTriedAi((ids) => [...ids, target.id]);
     onWatch?.();
     try {
-      const anchor = framingOf(other) ?? IDENTITY;
-      if (!framingOf(other)) await autoLineUp.place(other.id, IDENTITY);
-      const framing = await matchWithClaude(other, anchor, target);
+      // An unplaced photo stays as taken on the picture shown and anchors the
+      // match; it is matched from on the whole head, like every match.
+      const kept = framingOf(other)
+        ? other
+        : {
+            ...other,
+            alignment: { ...IDENTITY, ...placedOn(view, guideStyle) },
+          };
+      if (kept !== other) await autoLineUp.place(other.id, kept.alignment!);
+      const framing = await matchWithClaude(other, framingOf(kept)!, target);
       if (framing) {
         await autoLineUp.place(target.id, framing);
         snapFeedback();
@@ -340,7 +345,12 @@ export function ComparisonViewer({
     .at(-1);
   const canAnalyze = owner !== "local" || Boolean(DEV_ANALYSIS_URL);
   const analyzing = analyze.isPending;
-  const changeMap = useChangeMap(before, after, (change || analyzing) && framed);
+  const changeMap = useChangeMap(
+    before,
+    after,
+    guideStyle,
+    (change || analyzing) && framed,
+  );
   const changeReady =
     change && changeMap.status === "ready" ? changeMap.result : null;
   async function runAnalysis() {
@@ -445,12 +455,11 @@ export function ComparisonViewer({
             zoom={zoom}
             grid={grid}
             variant={guideStyle}
-            guide={guide}
+            showGuide={guide}
             overlay={(width, height) => (
               <>
                 {side === "after" && changeReady && (
                   <ChangeOverlay
-                    carry={guideCarry(view, "head", guideStyle)}
                     map={changeReady.map}
                     turn={turn}
                     size={Math.min(width, height)}

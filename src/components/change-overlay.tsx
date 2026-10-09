@@ -8,7 +8,6 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { G, Rect } from "react-native-svg";
 import type { ChangeMap } from "@/lib/change-map";
-import { IDENTITY, type Similarity } from "@/lib/alignment/transform";
 
 const FADE_MS = 250;
 // A hair larger than the cell, so antialiasing leaves no seams.
@@ -24,17 +23,11 @@ export function ChangeOverlay({
   turn,
   size,
   opacity,
-  carry = IDENTITY,
 }: {
   map: ChangeMap;
   turn: number;
   /** Side of the guide square, centred in the parent. */
   size: number;
-  /**
-   * From the whole-head picture, which maps are computed on, to the picture
-   * shown (see `guideCarry`). A turn-free zoom and shift.
-   */
-  carry?: Similarity;
   opacity: number;
 }) {
   const reduced = useReducedMotion();
@@ -86,11 +79,7 @@ export function ChangeOverlay({
       ]}
     >
       <Svg width={size} height={size} viewBox={`0 0 ${n} ${n}`}>
-        <G
-          transform={`rotate(${turn * 90} ${n / 2} ${n / 2}) translate(${n * (carry.tx + 0.5 - carry.scale / 2)} ${n * (carry.ty + 0.5 - carry.scale / 2)}) scale(${carry.scale})`}
-        >
-          {blocks}
-        </G>
+        <G transform={`rotate(${turn * 90} ${n / 2} ${n / 2})`}>{blocks}</G>
       </Svg>
     </Animated.View>
   );

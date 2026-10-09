@@ -131,7 +131,7 @@ function useSnappedPlacement(id: string, target: Placement) {
 export function FramedPhoto({
   photo,
   turn,
-  variant = "head",
+  variant,
   width,
   height,
   unframed = "guide",
@@ -141,7 +141,7 @@ export function FramedPhoto({
   photo: Photo;
   turn: number;
   /** The guide picture it is shown on. */
-  variant?: GuideStyle;
+  variant: GuideStyle;
   width: number;
   height: number;
   unframed?: Unframed;
@@ -201,7 +201,8 @@ export function FramedThumb({
 }: {
   photo: Photo;
   turn: number;
-  variant?: GuideStyle;
+  /** The guide picture it is shown on, as everywhere else for its view. */
+  variant: GuideStyle;
   width: number;
   height: number;
   style?: StyleProp<ViewStyle>;
