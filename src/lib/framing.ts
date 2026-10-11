@@ -70,6 +70,25 @@ export function framingKey(framing: Similarity | null) {
     : "";
 }
 
+/**
+ * Whether two framings put a photo in the same place. Within a tolerance,
+ * since a framing carried onto the other guide picture and back drifts by
+ * an ulp; a turn of 360° is the same place.
+ */
+export function sameFraming(
+  a: Similarity | null,
+  b: Similarity | null,
+  tolerance = 1e-6,
+): boolean {
+  if (!a || !b) return a === b;
+  return (
+    Math.abs(a.tx - b.tx) <= tolerance &&
+    Math.abs(a.ty - b.ty) <= tolerance &&
+    Math.abs(a.scale - b.scale) <= tolerance &&
+    Math.abs(nearestTurn(a.rotation, b.rotation) - a.rotation) <= tolerance
+  );
+}
+
 /** A photo's unframed size in guide units: contained in the unit square. */
 export function baseBox(photo: { width: number; height: number }) {
   const longest = Math.max(photo.width, photo.height);

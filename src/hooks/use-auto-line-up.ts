@@ -2,7 +2,7 @@ import { useState, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { journalKey, useAccount } from "./use-journal";
 import { readJournal, saveAlignment } from "@/lib/repository";
-import { framingKey, framingOf, keptAsTaken, type Framing } from "@/lib/framing";
+import { framingOf, keptAsTaken, sameFraming, type Framing } from "@/lib/framing";
 import type { GuideStyle } from "@/lib/guide-art";
 import { matchFraming, referenceFor, type Match } from "@/lib/match";
 import type { Similarity } from "@/lib/alignment";
@@ -29,13 +29,14 @@ export type TurnOptions = {
   ambiguous: boolean;
   /** How many turns have been taken since the match. */
   turned: number;
-  /** Key of the framing the match (or the last turn) stored. */
-  placed: string;
+  /** The framing the match (or the last turn) stored. */
+  placed: Similarity;
 };
 /**
  * Turn options per photo, kept while the app runs so an ambiguous match can
- * be turned with one tap. A photo moved by hand since no longer matches its
- * `placed` key, and so offers no turns: a turn would throw the hand placement away.
+ * be turned with one tap. A photo moved by hand since sits at neither
+ * `placed` nor any turn, and so offers no turns: a turn would throw the
+ * hand placement away.
  */
 const turns = new Map<string, TurnOptions>();
 const listeners = new Set<() => void>();
@@ -52,7 +53,7 @@ function setTurns(id: string, match: Match | null, placed: Similarity) {
       alternatives: match.alternatives.map((f) => ({ ...f, source: "auto" })),
       ambiguous: match.ambiguous,
       turned: 0,
-      placed: framingKey(placed),
+      placed,
     });
   else turns.delete(id);
   for (const listener of listeners) listener();
@@ -72,13 +73,16 @@ export function useLineUpState(id: string) {
 /**
  * The other turns a photo's match could take, and whether the match was
  * unsure which way the head faces. Undefined when the photo's stored framing
- * (`current`) is no longer the one the match placed: it was moved by hand.
+ * (`current`) is neither where the match put it nor a turn it has been
+ * through: it was moved by hand. (A turn just taken counts too, since the
+ * journal's update lands a tick after the turn is recorded.)
  */
 export function useTurnOptions(id: string, current: Similarity | null) {
-  const key = framingKey(current);
   return useSyncExternalStore(subscribe, () => {
     const options = turns.get(id);
-    return options && options.placed === key ? options : undefined;
+    if (!options) return undefined;
+    const known = [options.placed, ...options.alternatives];
+    return known.some((f) => sameFraming(f, current)) ? options : undefined;
   });
 }
 
@@ -219,7 +223,7 @@ export function useAutoLineUp() {
       alternatives: [...rest, { ...current, source: "auto" }],
       ambiguous: options.ambiguous,
       turned: options.turned + 1,
-      placed: framingKey(placed),
+      placed,
     });
     for (const listener of listeners) listener();
     setState(id, "lined");

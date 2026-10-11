@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applySimilarity, type Similarity } from "./alignment/transform";
-import { baseBox, chainFraming, compose, framingOf } from "./framing";
+import { baseBox, chainFraming, compose, framingOf, sameFraming } from "./framing";
 import { guideCarry } from "./guide-art";
 
 const close = (a: number[], b: number[]) =>
@@ -84,5 +84,28 @@ describe("framing", () => {
         applySimilarity(referenceFraming, p[0] * refWidth, p[1] * refWidth),
       );
     }
+  });
+});
+
+describe("sameFraming", () => {
+  const f: Similarity = { tx: 0.12, ty: -0.05, rotation: 0.7, scale: 1.3 };
+
+  test("ignores floating-point drift and whole turns", () => {
+    expect(sameFraming(f, { ...f, tx: f.tx + 1e-9, scale: f.scale - 1e-9 })).toBe(true);
+    expect(sameFraming(f, { ...f, rotation: f.rotation + 2 * Math.PI })).toBe(true);
+  });
+
+  test("sees a real move, a turn or a zoom", () => {
+    expect(sameFraming(f, { ...f, tx: f.tx + 0.01 })).toBe(false);
+    expect(sameFraming(f, { ...f, rotation: f.rotation + Math.PI })).toBe(false);
+    expect(sameFraming(f, { ...f, scale: f.scale * 1.01 })).toBe(false);
+    expect(sameFraming(f, null)).toBe(false);
+    expect(sameFraming(null, null)).toBe(true);
+  });
+
+  test("survives a carry onto the close-up guide and back", () => {
+    const there = compose(guideCarry("crown", "head", "closeup"), f);
+    const back = compose(guideCarry("crown", "closeup", "head"), there);
+    expect(sameFraming(f, back)).toBe(true);
   });
 });
