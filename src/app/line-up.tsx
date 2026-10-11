@@ -44,6 +44,7 @@ import {
   placedOn,
   type Framing,
 } from "@/lib/framing";
+import type { Similarity } from "@/lib/alignment";
 import { VIEW_LABELS, errorMessage, formatDate, type Photo } from "@/lib/model";
 
 /** Line one photo up against its view's guide. */
@@ -103,6 +104,8 @@ function LineUp({ photo }: { photo: Photo }) {
   const [saved, setSaved] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  /** Other turns the match could take, when it wasn't sure which way the head faces. */
+  const [otherTurns, setOtherTurns] = useState<Similarity[]>([]);
   const save = useJournalMutation((owner: string, framing: Framing) =>
     saveAlignment(owner, id, framing),
   );
@@ -161,10 +164,12 @@ function LineUp({ photo }: { photo: Photo }) {
     setError("");
     if (withClaude) setTriedClaude(true);
     try {
-      const framing = await (withClaude ? matchWithClaude : matchFraming)(
-        reference,
-        framingOf(reference, guide)!,
-        photo,
+      const found = withClaude
+        ? await matchWithClaude(reference, framingOf(reference, guide)!, photo)
+        : await matchFraming(reference, framingOf(reference, guide)!, photo);
+      const framing = found && "framing" in found ? found.framing : found;
+      setOtherTurns(
+        found && "framing" in found && found.ambiguous ? found.alternatives : [],
       );
       if (!framing) {
         setMessage(
@@ -294,9 +299,25 @@ function LineUp({ photo }: { photo: Photo }) {
         {phase === "matched" && (
           <>
             <Text style={s.body}>
-              {byClaude ? "Claude matched" : "Matched"} it to {date}. Does it
-              sit on the guide?
+              {byClaude ? "Claude matched" : "Matched"} it to {date}.{" "}
+              {otherTurns.length
+                ? "It wasn't sure which way the head faces: check the guide."
+                : "Does it sit on the guide?"}
             </Text>
+            {otherTurns.length > 0 && (
+              <Button
+                label="Turn it the other way"
+                icon="move"
+                variant="secondary"
+                onPress={() => {
+                  const [next, ...rest] = otherTurns;
+                  const current = settledFraming(edit);
+                  snapFraming(edit, next);
+                  snapFeedback();
+                  setOtherTurns([...rest, current]);
+                }}
+              />
+            )}
             <View style={s.wrap}>
               <Button
                 label="Not right?"

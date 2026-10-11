@@ -51,3 +51,6 @@ supabase/functions/node_modules/
 
 # Private evaluation images, model reports and human scores
 /.model-eval/
+
+# Python prototype bytecode
+__pycache__/

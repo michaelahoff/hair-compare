@@ -17,13 +17,17 @@ import { FramedPhoto, snapFeedback } from "./framed-photo";
 import { AiBubble, ScanOverlay, useScanTour } from "./scan";
 import { ScanOutlines, type InspectShape } from "./scan-outlines";
 import { AI_MATCH, MatchChoices } from "./match-choices";
+import { CoverageCard } from "./coverage-card";
+import { CoverageTrend } from "./home/coverage-trend";
 import { useChangeMap } from "@/hooks/use-change-map";
+import { useReveal } from "@/hooks/use-reveal";
 import { useAccount, useJournalMutation } from "@/hooks/use-journal";
 import { useViewGuide } from "@/hooks/use-preferences";
 import {
   isLiningUp,
   useAutoLineUp,
   useLineUpState,
+  useTurnOptions,
 } from "@/hooks/use-auto-line-up";
 import { matchWithClaude } from "@/lib/match";
 import { analyzePhoto } from "@/lib/repository";
@@ -72,6 +76,7 @@ function Labels({ photo, label }: { photo: Photo; label: string }) {
 
 function PhotoPane({
   photo,
+  shownUri: revealUri,
   turn,
   zoom,
   grid,
@@ -83,6 +88,8 @@ function PhotoPane({
   steps,
 }: {
   photo: Photo;
+  /** Another picture of the same shape to show in the photo's place, e.g. the revealed view. */
+  shownUri?: string;
   turn: number;
   zoom: Zoom;
   grid: boolean;
@@ -137,7 +144,7 @@ function PhotoPane({
       {(width) => (
         <View style={{ width, height }}>
           <FramedPhoto
-            photo={photo}
+            photo={revealUri ? { ...photo, uri: revealUri } : photo}
             turn={turn}
             variant={variant}
             width={width}
@@ -252,6 +259,15 @@ export function ComparisonViewer({
     setChange(true);
   }
   const [opacity, setOpacity] = useState(0.8);
+  const [coverage, setCoverage] = useState(false);
+  const [trendWidth, setTrendWidth] = useState(0);
+  const [reveal, setReveal] = useState(false);
+  const revealed = {
+    before: useReveal(before, reveal),
+    after: useReveal(after, reveal),
+  };
+  // Coverage figures are about the crown; other views only get the reveal.
+  const crownView = view === "crown" || view === "top";
   const [explain, setExplain] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [triedAi, setTriedAi] = useState<string[]>([]);
@@ -276,6 +292,14 @@ export function ComparisonViewer({
   };
   const framed = Boolean(framingOf(before) && framingOf(after));
   const target = !framingOf(after) ? after : !framingOf(before) ? before : null;
+  // A match that wasn't sure which way a head faces offers its other turns.
+  const turnOptions = {
+    before: useTurnOptions(before.id),
+    after: useTurnOptions(after.id),
+  };
+  const unsure = (["before", "after"] as const).find(
+    (side) => turnOptions[side]?.ambiguous,
+  );
   const other = target === after ? before : after;
   const matching =
     aiBusy ||
@@ -449,6 +473,7 @@ export function ComparisonViewer({
           <PhotoPane
             key={side}
             photo={shown[side]}
+            shownUri={reveal ? revealed[side].data : undefined}
             turn={turn}
             zoom={zoom}
             grid={grid}
@@ -547,7 +572,9 @@ export function ComparisonViewer({
           {framed && (
             <View style={styles.inline}>
               <Text style={[s.muted, { flexShrink: 1 }]}>
-                The photos are lined up.
+                {unsure
+                  ? `Lined up, but not sure which way the ${formatDate(shown[unsure].taken_at)} head faces.`
+                  : "The photos are lined up."}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -557,6 +584,19 @@ export function ComparisonViewer({
                 <Text style={styles.link}>Adjust</Text>
               </Pressable>
             </View>
+          )}
+          {framed && unsure && (
+            <Button
+              label="Turn it the other way"
+              icon="move"
+              variant="secondary"
+              onPress={() =>
+                void autoLineUp
+                  .turn(shown[unsure].id, framingOf(shown[unsure])!)
+                  .then(() => snapFeedback())
+                  .catch((e) => setError(errorMessage(e)))
+              }
+            />
           )}
           {missed && target && (
             <>
@@ -674,7 +714,56 @@ export function ComparisonViewer({
           active={change}
           onPress={() => setChange(!change)}
         />
+        <IconButton
+          icon="magnify"
+          label="Reveal"
+          active={reveal}
+          onPress={() => setReveal(!reveal)}
+        />
+        {crownView && (
+          <IconButton
+            icon="eye"
+            label="Coverage"
+            active={coverage}
+            onPress={() => setCoverage(!coverage)}
+          />
+        )}
       </Card>
+      {reveal && (
+        <Card>
+          <Text style={[s.body, styles.caption]}>Reveal</Text>
+          <Text style={s.muted}>
+            {revealed.before.isPending || revealed.after.isPending
+              ? "Evening out the light and sharpening fine hairs…"
+              : "Local contrast evened out and fine detail sharpened, so thin and grey hairs stand out. Brightness isn't kept: it's a view to look in, not a photo to judge colour by."}
+          </Text>
+          {(revealed.before.error || revealed.after.error) && (
+            <Text style={styles.error}>
+              {errorMessage(revealed.before.error ?? revealed.after.error)}
+            </Text>
+          )}
+        </Card>
+      )}
+      {coverage && crownView && (
+        <>
+          <CoverageCard before={before} after={after} enabled={coverage} />
+          <Card>
+            <Text style={[s.body, styles.caption]}>
+              {VIEW_LABELS[view]} coverage over time
+            </Text>
+            <View onLayout={(e) => setTrendWidth(e.nativeEvent.layout.width)}>
+              {trendWidth > 0 && (
+                <CoverageTrend
+                  photos={photos}
+                  treatments={treatments}
+                  width={trendWidth}
+                  enabled={coverage}
+                />
+              )}
+            </View>
+          </Card>
+        </>
+      )}
       {change && (
         <Card>
           {changeMap.status === "unframed" ? (

@@ -4,7 +4,7 @@ import { journalKey, useAccount } from "./use-journal";
 import { readJournal, saveAlignment } from "@/lib/repository";
 import { framingOf, keptAsTaken, type Framing } from "@/lib/framing";
 import type { GuideStyle } from "@/lib/guide-art";
-import { matchFraming, referenceFor } from "@/lib/match";
+import { matchFraming, referenceFor, type Match } from "@/lib/match";
 import type { Journal, Photo } from "@/lib/model";
 
 /**
@@ -20,12 +20,26 @@ export const isLiningUp = (state: LineUpState | undefined) =>
 // One queue for the whole app: matching is CPU-bound, and a line-up started
 // on one screen carries on after it closes.
 const states = new Map<string, LineUpState>();
+/**
+ * The other turns a matched photo could take, best first, kept while the
+ * app runs so an ambiguous match can be turned with one tap.
+ */
+const turns = new Map<string, { alternatives: Framing[]; ambiguous: boolean }>();
 const listeners = new Set<() => void>();
 let queue: Promise<unknown> = Promise.resolve();
 
 function setState(id: string, state: LineUpState | undefined) {
   if (state) states.set(id, state);
   else states.delete(id);
+  for (const listener of listeners) listener();
+}
+function setTurns(id: string, match: Match | null) {
+  if (match && match.alternatives.length)
+    turns.set(id, {
+      alternatives: match.alternatives.map((f) => ({ ...f, source: "auto" })),
+      ambiguous: match.ambiguous,
+    });
+  else turns.delete(id);
   for (const listener of listeners) listener();
 }
 function subscribe(listener: () => void) {
@@ -38,6 +52,14 @@ function subscribe(listener: () => void) {
 /** A photo's automatic line-up, as it happens. */
 export function useLineUpState(id: string) {
   return useSyncExternalStore(subscribe, () => states.get(id));
+}
+
+/**
+ * The other turns a photo's match could take, and whether the match was
+ * unsure which way the head faces. Undefined once the photo is placed by hand.
+ */
+export function useTurnOptions(id: string) {
+  return useSyncExternalStore(subscribe, () => turns.get(id));
 }
 
 async function journalWith(owner: string, cache: QueryClient, id: string) {
@@ -86,16 +108,17 @@ function enqueue(owner: string, cache: QueryClient, id: string) {
         setState(id, undefined);
         return Boolean(photo && framingOf(photo));
       }
-      const framing = await matchFraming(
+      const match = await matchFraming(
         reference,
         framingOf(reference)!,
         photo,
       );
-      if (!framing) {
+      if (!match) {
         setState(id, "missed");
         return false;
       }
-      await store(owner, cache, id, { ...framing, source: "auto" });
+      await store(owner, cache, id, { ...match.framing, source: "auto" });
+      setTurns(id, match);
       setState(id, "lined");
       return true;
     } catch {
@@ -155,9 +178,24 @@ export function useAutoLineUp() {
     await lineUp(targets.map((p) => p.id));
   }
   /** Keep a framing found another way, e.g. by Claude, snapping it into place. */
-  async function place(id: string, framing: Framing) {
+  async function place(id: string, framing: Framing, match?: Match | null) {
     await store(owner, cache, id, { ...framing, source: "auto" });
+    setTurns(id, match ?? null);
     setState(id, "lined");
   }
-  return { lineUp, run, pairUp, place, progress };
+  /**
+   * Turn a matched photo to its next-best turn, e.g. when the match faced the
+   * head the wrong way. The turn just left goes to the back of the list, so
+   * tapping again cycles through every basin.
+   */
+  async function turn(id: string, current: Framing) {
+    const options = turns.get(id);
+    if (!options?.alternatives.length) return;
+    const [next, ...rest] = options.alternatives;
+    await store(owner, cache, id, next);
+    turns.set(id, { alternatives: [...rest, { ...current, source: "auto" }], ambiguous: false });
+    for (const listener of listeners) listener();
+    setState(id, "lined");
+  }
+  return { lineUp, run, pairUp, place, turn, progress };
 }
