@@ -9,7 +9,14 @@ import {
   type Similarity,
 } from "./alignment";
 import { warpImage } from "./alignment/image";
+import {
+  alignHeadsAsync,
+  headFeatures,
+  type HeadAlignResult,
+} from "./alignment/head-align";
 import { IDENTITY, baseBox, compose } from "./framing";
+import { rgbFromRgba, type RgbImage } from "./scalp/rgb";
+import { breathe } from "./steps";
 
 // Save a full-resolution display JPEG and a small working image for registration.
 // Re-encoding strips camera metadata (including GPS) from files we store/upload.
@@ -76,6 +83,44 @@ async function readGray(
     context.release();
   }
 }
+
+/** Render a manipulation as a JPEG and decode it to RGB pixels. */
+async function readRgb(
+  context: ReturnType<typeof ImageManipulator.manipulate>,
+  maxMegapixels: number,
+): Promise<RgbImage> {
+  const image = await context.renderAsync();
+  try {
+    const result = await image.saveAsync({
+      format: SaveFormat.JPEG,
+      compress: 0.92,
+      base64: true,
+    });
+    if (!result.base64) throw new Error("Could not read photo pixels.");
+    const decoded = decode(toByteArray(result.base64), {
+      useTArray: true,
+      maxResolutionInMP: maxMegapixels,
+    });
+    return rgbFromRgba(decoded.data, decoded.width, decoded.height);
+  } finally {
+    image.release();
+    context.release();
+  }
+}
+
+/** A photo's pixels, `width` across (or its own width if smaller), as RGB. */
+export async function readRgbPhoto(
+  photo: { uri: string; width: number; height: number },
+  width: number,
+): Promise<RgbImage> {
+  const context = ImageManipulator.manipulate(photo.uri);
+  if (photo.width > width) context.resize({ width });
+  const megapixels = (width * (photo.height / photo.width) * width) / 1e6;
+  return readRgb(context, Math.max(1, Math.ceil(megapixels + 0.5)));
+}
+
+/** Width photos are read at for the head-aware line-up. */
+const HEAD_ALIGN_WIDTH = 384;
 
 async function grayPhoto(uri: string) {
   const context = ImageManipulator.manipulate(uri);
@@ -168,6 +213,52 @@ export async function alignPhotos(
     );
   return result;
 }
+export type PhotoAlignment = HeadAlignResult & {
+  /** "head" when both heads were found and matched; "edges" for the plain match. */
+  method: "head" | "edges";
+};
+
+/** Smallest share of the frame a found head must cover to be trusted. */
+const MIN_HEAD_SHARE = 0.04;
+
+/**
+ * Line `target` up with `reference` by their heads: skin and the edges
+ * inside each head, ignoring floors and collars. Falls back to the plain
+ * edge match when a head isn't found in either photo. Every result carries
+ * the best transform per quarter turn and whether the turn is ambiguous.
+ */
+export async function alignPhotosByHead(
+  reference: { uri: string; width: number; height: number },
+  target: { uri: string; width: number; height: number },
+): Promise<PhotoAlignment> {
+  const [a, b] = await Promise.all([
+    readRgbPhoto(reference, HEAD_ALIGN_WIDTH),
+    readRgbPhoto(target, HEAD_ALIGN_WIDTH),
+  ]);
+  // Seconds of pixel work on the JS thread: pause between stages so the
+  // screen keeps animating and taking taps.
+  await breathe();
+  const fa = headFeatures(a);
+  await breathe();
+  const fb = headFeatures(b);
+  const share = (m: { data: Uint8Array }) =>
+    m.data.reduce((n, v) => n + v, 0) / m.data.length;
+  if (share(fa.mask) >= MIN_HEAD_SHARE && share(fb.mask) >= MIN_HEAD_SHARE) {
+    const result = await alignHeadsAsync(fa.levels, fb.levels);
+    if (Number.isFinite(result.score) && result.alternatives.length)
+      return { ...result, method: "head" };
+  }
+  const plain = await alignPhotos(reference.uri, target.uri);
+  return {
+    transform: plain.transform,
+    score: plain.score,
+    alternatives: [{ transform: plain.transform, score: plain.score }],
+    ambiguous: false,
+    overlap: 0,
+    method: "edges",
+  };
+}
+
 /**
  * A photo shrunk to `longest` pixels on its longer side, as base64 JPEG with
  * its exact size, for a model asked to point at things in it.

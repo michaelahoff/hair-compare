@@ -17,6 +17,13 @@ import {
 import { supabase } from "@/lib/supabase";
 import * as repository from "@/lib/repository";
 
+/**
+ * Query families computed from a photo's pixels on the device. They never go
+ * stale, and redoing them costs seconds each, so a foreground refresh leaves
+ * them be.
+ */
+const DERIVED_QUERIES = new Set(["reveal", "scalp-metrics", "change-map"]);
+
 const AuthContext = createContext<{
   owner: string;
   session: Session | null;
@@ -59,7 +66,9 @@ export function JournalProvider({ children }: PropsWithChildren) {
     const appState = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         db.auth.startAutoRefresh();
-        void queryClient.invalidateQueries();
+        void queryClient.invalidateQueries({
+          predicate: (q) => !DERIVED_QUERIES.has(String(q.queryKey[0])),
+        });
       } else db.auth.stopAutoRefresh();
     });
     if (Platform.OS !== "web") db.auth.startAutoRefresh();

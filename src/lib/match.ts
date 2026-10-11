@@ -8,22 +8,47 @@ import { robustSimilarity } from "./alignment/points";
 import { MIN_MATCH, type Similarity } from "./alignment";
 import { pixelToNormal } from "./alignment/transform";
 import { chainFraming, framingOf } from "./framing";
-import { alignPhotos } from "./photos";
+import { alignPhotosByHead } from "./photos";
 import type { Photo } from "./model";
+
+/** A match: the framing to use, and the other turns it could have been. */
+export type Match = {
+  framing: Similarity;
+  /** Framings for the other quarter-turn basins, best first. Empty for a plain match. */
+  alternatives: Similarity[];
+  /** True when the runner-up basin scored nearly as well: check which way the head faces. */
+  ambiguous: boolean;
+  score: number;
+  method: "head" | "edges";
+};
+
+/** Lowest head-match score worth keeping; heads correlate higher than raw edges. */
+export const MIN_HEAD_MATCH = 0.35;
 
 /**
  * Frame `target` from an already-framed `reference` of the same view by
- * matching their details. Null when no trustworthy match is found; throws
- * when the photos can't be read.
+ * matching their heads, or their plain edges when no head is found in one of
+ * them. Null when the match scores under its floor (a weak head match is not
+ * retried on edges: those lock onto tiles and cabinets); throws when the
+ * photos can't be read.
  */
 export async function matchFraming(
   reference: Photo,
   referenceFraming: Similarity,
   target: Photo,
-): Promise<Similarity | null> {
-  const result = await alignPhotos(reference.uri, target.uri);
-  if (result.score < MIN_MATCH) return null;
-  return chainFraming(reference, referenceFraming, target, result.transform);
+): Promise<Match | null> {
+  const result = await alignPhotosByHead(reference, target);
+  const floor = result.method === "head" ? MIN_HEAD_MATCH : MIN_MATCH;
+  if (result.score < floor) return null;
+  const chain = (t: Similarity) =>
+    chainFraming(reference, referenceFraming, target, t);
+  return {
+    framing: chain(result.transform),
+    alternatives: result.alternatives.slice(1).map((a) => chain(a.transform)),
+    ambiguous: result.ambiguous,
+    score: result.score,
+    method: result.method,
+  };
 }
 
 /** Pairs must agree to within this share of the photo's width. */
