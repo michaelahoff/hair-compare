@@ -3,7 +3,8 @@ import { toByteArray } from "base64-js";
 
 import { createImage, type GrayImage } from "../alignment/image";
 import { createRgb, type RgbImage } from "./rgb";
-import { pngDataUri, revealLuma, revealRgb, tintLines } from "./reveal";
+import { gaussianBlur } from "./image-ops";
+import { pngDataUri, revealLuma, revealRgb, tintLines, wideBlur } from "./reveal";
 
 const N = 200;
 const LINE_X = 100;
@@ -172,5 +173,32 @@ describe("pngDataUri", () => {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     expect(view.getUint32(16)).toBe(64);
     expect(view.getUint32(20)).toBe(48);
+  });
+});
+
+describe("wideBlur", () => {
+  /** A smooth ramp plus a slow sine: what a wide blur should leave untouched. */
+  function smooth(w: number, h: number): GrayImage {
+    const img = createImage(w, h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++)
+        img.data[y * w + x] =
+          100 + (60 * x) / w + 20 * Math.sin((x / w) * 6) * Math.cos((y / h) * 4);
+    return img;
+  }
+
+  test.each([
+    [120, 96],
+    [121, 97],
+    [90, 61],
+  ])("matches the direct blur on a %i x %i image, odd sizes included", (w, h) => {
+    const img = smooth(w, h);
+    const sigma = 14;
+    const direct = gaussianBlur(img, sigma).data;
+    const fast = wideBlur(img, sigma).data;
+    let worst = 0;
+    for (let i = 0; i < direct.length; i++)
+      worst = Math.max(worst, Math.abs(direct[i] - fast[i]));
+    expect(worst).toBeLessThan(1.5);
   });
 });

@@ -1,6 +1,7 @@
 import { queryOptions, skipToken, useQuery } from "@tanstack/react-query";
 import { readRgbPhoto } from "@/lib/photos";
 import { pngDataUri, revealRgb } from "@/lib/scalp/reveal";
+import { breathe, oneAtATime } from "@/lib/steps";
 import type { Photo } from "@/lib/model";
 
 /**
@@ -9,27 +10,31 @@ import type { Photo } from "@/lib/model";
  */
 export const REVEAL_WIDTH = 720;
 
-/** Let the screen paint before the pixel work starts. */
-function afterPaint() {
-  return new Promise<void>((resolve) =>
-    typeof requestIdleCallback === "function"
-      ? requestIdleCallback(() => resolve(), { timeout: 200 })
-      : setTimeout(resolve, 16),
-  );
-}
-
-async function reveal(photo: Photo): Promise<string> {
-  const rgb = await readRgbPhoto(photo, REVEAL_WIDTH);
-  await afterPaint();
-  return pngDataUri(revealRgb(rgb));
+/**
+ * One reveal at a time, with a pause between its stages, so the pair's two
+ * reveals don't both decode at once and the screen keeps up.
+ */
+function reveal(photo: Photo, signal: AbortSignal): Promise<string> {
+  return oneAtATime(async () => {
+    // Nobody is looking any more: skip the work.
+    if (signal.aborted) throw new Error("Cancelled");
+    const rgb = await readRgbPhoto(photo, REVEAL_WIDTH);
+    await breathe();
+    const revealed = revealRgb(rgb);
+    await breathe();
+    return pngDataUri(revealed);
+  });
 }
 
 export function revealQuery(photo: Photo | undefined, enabled = true) {
   return queryOptions({
-    queryKey: ["reveal", photo?.id ?? null, photo?.uri ?? null] as const,
-    queryFn: enabled && photo ? () => reveal(photo) : skipToken,
+    // Keyed by id, not uri: a signed-in account gets a fresh signed URL on
+    // every journal read, and the picture behind it doesn't change.
+    queryKey: ["reveal", photo?.id ?? null] as const,
+    queryFn: enabled && photo ? ({ signal }) => reveal(photo, signal) : skipToken,
     staleTime: Infinity,
-    gcTime: 10 * 60 * 1000,
+    // A 720-px PNG is a few megabytes as a data URI: unwatched ones go soon.
+    gcTime: 2 * 60 * 1000,
     retry: false,
   });
 }

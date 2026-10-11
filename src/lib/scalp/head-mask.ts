@@ -167,8 +167,9 @@ function coreOf(blob: Mask, s: number): Mask {
 
 /**
  * The head in a photo. `mask` is 1 on the head (hair and scalp, holes filled,
- * thin attachments trimmed). `skin` and `hairness` are the 0..1 maps the mask
- * is built from, returned for drawing and for tuning.
+ * thin attachments trimmed), and empty when nothing hair-like is found.
+ * `skin` and `hairness` are the 0..1 maps the mask is built from, returned
+ * for drawing and for tuning.
  */
 export function headMask(rgb: RgbImage): {
   mask: Mask;
@@ -211,11 +212,9 @@ export function headMask(rgb: RgbImage): {
   const scoreBlur = gaussianBlur(score, 4 * s);
   const r = kernelRadius(15 * s);
   const m = openAtFrame(closeAtFrame(maskFrom(scoreBlur, 0.3), r), r);
-  if (!m.data.includes(1)) {
-    const all = createMask(w, h);
-    all.data.fill(1);
-    return { mask: all, skin, hairness };
-  }
+  // Nothing hair-like anywhere: no head. An empty mask lets callers fall
+  // back or say so, where a full-frame mask would pass as a head.
+  if (!m.data.includes(1)) return { mask: createMask(w, h), skin, hairness };
   // Prefer large blobs whose centroid is near the frame centre (distance in
   // width units, weighted by exp(-2 d)).
   const blob = fillHoles(

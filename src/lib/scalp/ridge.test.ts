@@ -244,7 +244,7 @@ describe("lineDensity", () => {
     expect(density).toBeCloseTo(0.5, 6);
   });
 
-  test("density is NaN below 0.25 cm²", () => {
+  test("density is null below 0.25 cm²", () => {
     const lines = new Uint8Array(size * size);
     const small = new Uint8Array(size * size);
     for (let y = 0; y < 4; y++) {
@@ -252,7 +252,7 @@ describe("lineDensity", () => {
     }
     const { areaCm2, density } = lineDensity(lines, small, size, size, 10);
     expect(areaCm2).toBeCloseTo(0.16, 6);
-    expect(density).toBeNaN();
+    expect(density).toBeNull();
   });
 });
 

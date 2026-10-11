@@ -10,12 +10,13 @@ import {
 } from "./alignment";
 import { warpImage } from "./alignment/image";
 import {
-  alignHeads,
+  alignHeadsAsync,
   headFeatures,
   type HeadAlignResult,
 } from "./alignment/head-align";
 import { IDENTITY, baseBox, compose } from "./framing";
 import { rgbFromRgba, type RgbImage } from "./scalp/rgb";
+import { breathe } from "./steps";
 
 // Save a full-resolution display JPEG and a small working image for registration.
 // Re-encoding strips camera metadata (including GPS) from files we store/upload.
@@ -234,13 +235,16 @@ export async function alignPhotosByHead(
     readRgbPhoto(reference, HEAD_ALIGN_WIDTH),
     readRgbPhoto(target, HEAD_ALIGN_WIDTH),
   ]);
-  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  // Seconds of pixel work on the JS thread: pause between stages so the
+  // screen keeps animating and taking taps.
+  await breathe();
   const fa = headFeatures(a);
+  await breathe();
   const fb = headFeatures(b);
   const share = (m: { data: Uint8Array }) =>
     m.data.reduce((n, v) => n + v, 0) / m.data.length;
   if (share(fa.mask) >= MIN_HEAD_SHARE && share(fb.mask) >= MIN_HEAD_SHARE) {
-    const result = alignHeads(fa.levels, fb.levels);
+    const result = await alignHeadsAsync(fa.levels, fb.levels);
     if (Number.isFinite(result.score) && result.alternatives.length)
       return { ...result, method: "head" };
   }

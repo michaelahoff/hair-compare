@@ -2,9 +2,10 @@ import { useState, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { journalKey, useAccount } from "./use-journal";
 import { readJournal, saveAlignment } from "@/lib/repository";
-import { framingOf, keptAsTaken, type Framing } from "@/lib/framing";
+import { framingKey, framingOf, keptAsTaken, type Framing } from "@/lib/framing";
 import type { GuideStyle } from "@/lib/guide-art";
 import { matchFraming, referenceFor, type Match } from "@/lib/match";
+import type { Similarity } from "@/lib/alignment";
 import type { Journal, Photo } from "@/lib/model";
 
 /**
@@ -20,11 +21,23 @@ export const isLiningUp = (state: LineUpState | undefined) =>
 // One queue for the whole app: matching is CPU-bound, and a line-up started
 // on one screen carries on after it closes.
 const states = new Map<string, LineUpState>();
+/** The other turns a matched photo could take, and where the match left it. */
+export type TurnOptions = {
+  /** Best first; the turn just left goes to the back when one is taken. */
+  alternatives: Framing[];
+  /** True when the match wasn't sure which way the head faces. */
+  ambiguous: boolean;
+  /** How many turns have been taken since the match. */
+  turned: number;
+  /** Key of the framing the match (or the last turn) stored. */
+  placed: string;
+};
 /**
- * The other turns a matched photo could take, best first, kept while the
- * app runs so an ambiguous match can be turned with one tap.
+ * Turn options per photo, kept while the app runs so an ambiguous match can
+ * be turned with one tap. A photo moved by hand since no longer matches its
+ * `placed` key, and so offers no turns: a turn would throw the hand placement away.
  */
-const turns = new Map<string, { alternatives: Framing[]; ambiguous: boolean }>();
+const turns = new Map<string, TurnOptions>();
 const listeners = new Set<() => void>();
 let queue: Promise<unknown> = Promise.resolve();
 
@@ -33,11 +46,13 @@ function setState(id: string, state: LineUpState | undefined) {
   else states.delete(id);
   for (const listener of listeners) listener();
 }
-function setTurns(id: string, match: Match | null) {
+function setTurns(id: string, match: Match | null, placed: Similarity) {
   if (match && match.alternatives.length)
     turns.set(id, {
       alternatives: match.alternatives.map((f) => ({ ...f, source: "auto" })),
       ambiguous: match.ambiguous,
+      turned: 0,
+      placed: framingKey(placed),
     });
   else turns.delete(id);
   for (const listener of listeners) listener();
@@ -56,10 +71,15 @@ export function useLineUpState(id: string) {
 
 /**
  * The other turns a photo's match could take, and whether the match was
- * unsure which way the head faces. Undefined once the photo is placed by hand.
+ * unsure which way the head faces. Undefined when the photo's stored framing
+ * (`current`) is no longer the one the match placed: it was moved by hand.
  */
-export function useTurnOptions(id: string) {
-  return useSyncExternalStore(subscribe, () => turns.get(id));
+export function useTurnOptions(id: string, current: Similarity | null) {
+  const key = framingKey(current);
+  return useSyncExternalStore(subscribe, () => {
+    const options = turns.get(id);
+    return options && options.placed === key ? options : undefined;
+  });
 }
 
 async function journalWith(owner: string, cache: QueryClient, id: string) {
@@ -118,7 +138,7 @@ function enqueue(owner: string, cache: QueryClient, id: string) {
         return false;
       }
       await store(owner, cache, id, { ...match.framing, source: "auto" });
-      setTurns(id, match);
+      setTurns(id, match, match.framing);
       setState(id, "lined");
       return true;
     } catch {
@@ -180,20 +200,27 @@ export function useAutoLineUp() {
   /** Keep a framing found another way, e.g. by Claude, snapping it into place. */
   async function place(id: string, framing: Framing, match?: Match | null) {
     await store(owner, cache, id, { ...framing, source: "auto" });
-    setTurns(id, match ?? null);
+    setTurns(id, match ?? null, framing);
     setState(id, "lined");
   }
   /**
    * Turn a matched photo to its next-best turn, e.g. when the match faced the
    * head the wrong way. The turn just left goes to the back of the list, so
-   * tapping again cycles through every basin.
+   * tapping again cycles through every basin. Pins mark spots on the photo
+   * itself, so they come along.
    */
   async function turn(id: string, current: Framing) {
     const options = turns.get(id);
     if (!options?.alternatives.length) return;
     const [next, ...rest] = options.alternatives;
-    await store(owner, cache, id, next);
-    turns.set(id, { alternatives: [...rest, { ...current, source: "auto" }], ambiguous: false });
+    const placed = { ...next, pins: current.pins };
+    await store(owner, cache, id, placed);
+    turns.set(id, {
+      alternatives: [...rest, { ...current, source: "auto" }],
+      ambiguous: options.ambiguous,
+      turned: options.turned + 1,
+      placed: framingKey(placed),
+    });
     for (const listener of listeners) listener();
     setState(id, "lined");
   }

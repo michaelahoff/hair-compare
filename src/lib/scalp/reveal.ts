@@ -41,16 +41,19 @@ function defaultRadius(width: number): number {
 /**
  * Samples along one axis for a bilinear resize from `src` to `dst` samples:
  * for each output sample, the two source samples to blend and the weight of
- * the second. Pixel centres are aligned.
+ * the second. Pixel centres are aligned. `scale` is source samples per
+ * output sample; it defaults to the size ratio, but a pyramid level made by
+ * dropping an odd last row or column is exactly half its parent, not
+ * src / dst, and using the ratio there drifts the result toward the far edge.
  */
 function linearTaps(
   src: number,
   dst: number,
+  scale = src / dst,
 ): { lo: Int32Array; hi: Int32Array; frac: Float64Array } {
   const lo = new Int32Array(dst);
   const hi = new Int32Array(dst);
   const frac = new Float64Array(dst);
-  const scale = src / dst;
   for (let i = 0; i < dst; i++) {
     const u = Math.min(Math.max((i + 0.5) * scale - 0.5, 0), src - 1);
     const k = Math.floor(u);
@@ -66,11 +69,12 @@ function upsampleBilinear(
   img: GrayImage,
   width: number,
   height: number,
+  scale?: number,
 ): GrayImage {
   const { width: sw, data: src } = img;
   const out = createImage(width, height);
-  const cols = linearTaps(sw, width);
-  const rows = linearTaps(img.height, height);
+  const cols = linearTaps(sw, width, scale);
+  const rows = linearTaps(img.height, height, scale);
   for (let y = 0; y < height; y++) {
     const r0 = rows.lo[y] * sw;
     const r1 = rows.hi[y] * sw;
@@ -112,8 +116,12 @@ function padReflect(img: GrayImage, m: number): GrayImage {
  * The image is first padded by the Gaussian's reach, mirrored as gaussianBlur
  * mirrors. Without that, the pyramid's own edge handling would reach the
  * picture's edge, where the error is several times larger than inside.
+ *
+ * Each level is exactly half its parent (an odd last row or column is
+ * dropped), so the way back up uses a scale of one half, not the size ratio:
+ * with the ratio, odd sizes drifted by a few pixels at the far corner.
  */
-function wideBlur(img: GrayImage, sigma: number): GrayImage {
+export function wideBlur(img: GrayImage, sigma: number): GrayImage {
   const m = Math.max(0, Math.ceil(3 * sigma));
   const padded = m > 0 ? padReflect(img, m) : img;
   const levels: GrayImage[] = [padded];
@@ -126,7 +134,7 @@ function wideBlur(img: GrayImage, sigma: number): GrayImage {
   }
   let out = gaussianBlur(cur, s);
   for (let k = levels.length - 2; k >= 0; k--) {
-    out = upsampleBilinear(out, levels[k].width, levels[k].height);
+    out = upsampleBilinear(out, levels[k].width, levels[k].height, 0.5);
   }
   if (m === 0) return out;
   const cropped = createImage(img.width, img.height);

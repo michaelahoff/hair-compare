@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from "react-native-svg";
 import { colors, fonts } from "@/components/ui";
 import { useTimelineMetrics } from "@/hooks/use-scalp-metrics";
-import { shortDate, type Photo, type Treatment } from "@/lib/model";
+import { errorMessage, shortDate, type Photo, type Treatment } from "@/lib/model";
 import type { ScalpMetrics } from "@/lib/scalp/metrics";
 
 const HEIGHT = 120;
@@ -64,6 +64,7 @@ export function CoverageTrend({
     [rows],
   );
   const pending = rows.filter((r) => r.loading).length;
+  const failed = rows.filter((r) => r.error);
   if (!photos.length) return null;
   const t0 = Date.parse(photos[0].taken_at);
   const t1 = Math.max(t0 + 86400000, Date.parse(photos[photos.length - 1].taken_at));
@@ -172,6 +173,12 @@ export function CoverageTrend({
       </Text>
       {pending > 0 && (
         <Text style={styles.note}>Reading {pending} more {pending === 1 ? "photo" : "photos"}…</Text>
+      )}
+      {!pending && failed.length > 0 && (
+        <Text style={styles.note}>
+          {failed.length === 1 ? "One photo" : `${failed.length} photos`} couldn&apos;t be
+          read and {failed.length === 1 ? "is" : "are"} left out: {errorMessage(failed[0].error)}
+        </Text>
       )}
       {!pending && ratio.flat().length === 0 && (
         <Text style={styles.note}>

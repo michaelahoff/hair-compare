@@ -27,8 +27,10 @@ export const MIN_HEAD_MATCH = 0.35;
 
 /**
  * Frame `target` from an already-framed `reference` of the same view by
- * matching their heads (or, failing that, their details). Null when no
- * trustworthy match is found; throws when the photos can't be read.
+ * matching their heads, or their plain edges when no head is found in one of
+ * them. Null when the match scores under its floor (a weak head match is not
+ * retried on edges: those lock onto tiles and cabinets); throws when the
+ * photos can't be read.
  */
 export async function matchFraming(
   reference: Photo,

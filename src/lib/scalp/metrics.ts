@@ -20,10 +20,12 @@ import {
 } from "./image-ops";
 import { headMask } from "./head-mask";
 import { resizeRgb, type RgbImage } from "./rgb";
-import { analyseStrands, type StrandRegion } from "./strands";
+import { strandSteps, type StrandRegion } from "./strands";
+import { runSteps, runStepsAsync, type Steps } from "../steps";
 import type { HairLength } from "../model";
 
-export const METRICS_VERSION = 1;
+/** Bump when the figures change meaning or method, so kept ones are redone. */
+export const METRICS_VERSION = 2;
 /** Width the head is found at. */
 export const MASK_WIDTH = 256;
 /**
@@ -57,7 +59,8 @@ export type ScalpMetrics = {
   whole: StrandRegion;
   /** Crown line density over ring line density; null when the ring can't be measured. */
   crownToRing: number | null;
-  transect: number;
+  /** Stereological cross-check of the whole head's line density; null when nothing was sampled. */
+  transect: number | null;
   typicalLengthMm: number | null;
   /**
    * Whether the line counts mean much: with long hair, strands overlap and
@@ -107,18 +110,30 @@ function bounds(mask: Mask) {
 }
 
 /**
+ * Whether a photo's line counts mean much: with long hair, strands overlap
+ * and only the exposed patch can be read.
+ */
+export function linesReliable(hairLength: HairLength | null): boolean {
+  return hairLength === "buzzed" || hairLength === "short";
+}
+
+/**
  * The scalp metrics of a photo given as RGB pixels (any width; around
  * 900 px wide reads single hairs on a buzzed head without taking seconds).
+ * Throws when no head is found. Yields between the heavy stages; see
+ * `computeScalpMetrics` and `computeScalpMetricsAsync`.
  */
-export function computeScalpMetrics(
+export function* scalpMetricsSteps(
   rgb: RgbImage,
   hairLength: HairLength | null,
-): { metrics: ScalpMetrics; maps: ScalpMaps } {
+): Steps<{ metrics: ScalpMetrics; maps: ScalpMaps }> {
   const small = resizeRgb(rgb, MASK_WIDTH);
+  yield;
   const { mask, skin } = headMask(small);
   const box = bounds(mask);
   if (box.area === 0)
     throw new Error("No head was found in this photo.");
+  yield;
   const touches =
     Number(box.x0 <= 1) +
     Number(box.x1 >= mask.width - 2) +
@@ -158,7 +173,7 @@ export function computeScalpMetrics(
   const scale = rgb.width / mask.width;
   const full = scaleMask(mask, rgb.width, rgb.height);
   const pxPerCm = pxPerCmSmall * scale;
-  const strands = analyseStrands(rgb, full, pxPerCm, {
+  const strands = yield* strandSteps(rgb, full, pxPerCm, {
     x: centre.x * scale,
     y: centre.y * scale,
   });
@@ -179,7 +194,7 @@ export function computeScalpMetrics(
       crownToRing: strands.crownToRing,
       transect: strands.transect,
       typicalLengthMm: strands.typicalLengthMm,
-      linesReliable: hairLength === "buzzed" || hairLength === "short",
+      linesReliable: linesReliable(hairLength),
     },
     maps: {
       mask: full.data,
@@ -189,6 +204,26 @@ export function computeScalpMetrics(
       height: rgb.height,
     },
   };
+}
+
+/** `scalpMetricsSteps` run straight through, for scripts and tests. */
+export function computeScalpMetrics(
+  rgb: RgbImage,
+  hairLength: HairLength | null,
+): { metrics: ScalpMetrics; maps: ScalpMaps } {
+  return runSteps(scalpMetricsSteps(rgb, hairLength));
+}
+
+/**
+ * `scalpMetricsSteps` with a pause between stages (about eight of them), so
+ * a phone's UI keeps up while a photo is read.
+ */
+export function computeScalpMetricsAsync(
+  rgb: RgbImage,
+  hairLength: HairLength | null,
+  pause?: () => Promise<void>,
+): Promise<{ metrics: ScalpMetrics; maps: ScalpMaps }> {
+  return runStepsAsync(scalpMetricsSteps(rgb, hairLength), pause);
 }
 
 /** A grey image of the skin map at mask size, for drawing or tests. */
@@ -221,7 +256,7 @@ export function metricsSentence(m: ScalpMetrics): string {
   const patch = `${m.patchCm2.toFixed(0)} cm² of scalp shows in the crown`;
   if (!m.linesReliable)
     return `${patch} (${Math.round(m.exposure * 100)}% of the head). Hair lines aren't counted on longer hair.`;
-  if (m.crownToRing === null)
+  if (m.crownToRing === null || m.crown.density === null || m.ring.density === null)
     return `${patch}. The ring around it couldn't be measured, so there is no crown-to-ring figure.`;
   return `${patch}. The crown shows ${m.crownToRing.toFixed(2)}× the hair-line density of the ring around it (${m.crown.density.toFixed(1)} vs ${m.ring.density.toFixed(1)} cm of hair per cm²).`;
 }

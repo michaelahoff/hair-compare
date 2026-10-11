@@ -8,10 +8,11 @@
  * or Node imports.
  */
 import { createImage } from "../alignment/image";
+import { runSteps, type Steps } from "../steps";
 import { erode, type Mask } from "./image-ops";
 import {
   lineDensity,
-  multiRidge,
+  multiRidgeSteps,
   removeShort,
   splitAtJunctions,
   thinLines,
@@ -19,7 +20,12 @@ import {
 } from "./ridge";
 import { lumaOf, type RgbImage } from "./rgb";
 
-export type StrandRegion = { lengthCm: number; areaCm2: number; density: number };
+/** Line length per area in one zone; density is null when the zone is too small to read. */
+export type StrandRegion = {
+  lengthCm: number;
+  areaCm2: number;
+  density: number | null;
+};
 export type StrandAnalysis = {
   /** Thin ridge-centre mask over the input image, 1 = hair line. */
   lines: Uint8Array;
@@ -32,8 +38,8 @@ export type StrandAnalysis = {
   whole: StrandRegion;
   /** crown.density / ring.density, null when the ring is too small or empty. */
   crownToRing: number | null;
-  /** Stereological cross-check for the whole region. */
-  transect: number;
+  /** Stereological cross-check for the whole region; null when nothing was sampled. */
+  transect: number | null;
   /** 80th percentile of unbroken piece length in mm, null when fewer than 20 pieces. */
   typicalLengthMm: number | null;
   /** Threshold used, so a UI can say how it was set. */
@@ -118,8 +124,8 @@ function zoneMasks(
  */
 function crownOverRing(crown: StrandRegion, ring: StrandRegion): number | null {
   if (ring.areaCm2 < MIN_RING_AREA_CM2) return null;
-  if (!(ring.density > 0)) return null;
-  if (Number.isNaN(crown.density)) return null;
+  if (ring.density === null || !(ring.density > 0)) return null;
+  if (crown.density === null) return null;
   return crown.density / ring.density;
 }
 
@@ -154,13 +160,14 @@ function typicalLengthMm(
  *
  * A patch with no hair gives zero densities and a null crown-to-ring ratio.
  * Throws when `pxPerCm` is not positive or the mask and photo sizes differ.
+ * Yields between the heavy stages; `analyseStrands` runs them straight through.
  */
-export function analyseStrands(
+export function* strandSteps(
   rgb: RgbImage,
   mask: Mask,
   pxPerCm: number,
   patchCentre: { x: number; y: number },
-): StrandAnalysis {
+): Steps<StrandAnalysis> {
   if (!(pxPerCm > 0)) throw new Error("analyseStrands: pxPerCm must be positive");
   if (mask.width !== rgb.width || mask.height !== rgb.height) {
     throw new Error("analyseStrands: mask and photo sizes differ");
@@ -170,7 +177,7 @@ export function analyseStrands(
   const luma = lumaOf(rgb);
   for (let i = 0; i < luma.data.length; i++) luma.data[i] /= 255;
   const hairPx = Math.max(0.8, pxPerCm * 0.008);
-  const ridge = multiRidge(
+  const ridge = yield* multiRidgeSteps(
     luma,
     [0.8, 1.2, 1.8].map((k) => k * hairPx),
     true,
@@ -190,6 +197,7 @@ export function analyseStrands(
     MIN_THRESHOLD,
   );
 
+  yield;
   const lines = removeShort(
     thinLines(normalised, ridge.theta, threshold, region),
     w,
@@ -197,6 +205,7 @@ export function analyseStrands(
     Math.round(pxPerCm * 0.08),
   );
 
+  yield;
   const zones = zoneMasks(w, h, region, patchCentre, pxPerCm);
   const crown = lineDensity(lines, zones.crown, w, h, pxPerCm);
   const ring = lineDensity(lines, zones.ring, w, h, pxPerCm);
@@ -222,6 +231,16 @@ export function analyseStrands(
   };
 }
 
+/** `strandSteps` run straight through. */
+export function analyseStrands(
+  rgb: RgbImage,
+  mask: Mask,
+  pxPerCm: number,
+  patchCentre: { x: number; y: number },
+): StrandAnalysis {
+  return runSteps(strandSteps(rgb, mask, pxPerCm, patchCentre));
+}
+
 /**
  * One plain sentence for a UI, saying how the crown compares with the ring.
  * Numbers are rounded to one decimal place. When there is no ratio, the
@@ -229,10 +248,10 @@ export function analyseStrands(
  * same as a ring that could not be measured.
  */
 export function strandSummary(a: StrandAnalysis): string {
-  if (a.crownToRing !== null) {
+  if (a.crownToRing !== null && a.crown.density !== null && a.ring.density !== null) {
     return `Crown shows ${a.crownToRing.toFixed(1)}× the hair-line density of the surrounding ring (${a.crown.density.toFixed(1)} vs ${a.ring.density.toFixed(1)} cm of hair per cm²).`;
   }
-  if (a.ring.areaCm2 < MIN_RING_AREA_CM2 || Number.isNaN(a.ring.density)) {
+  if (a.ring.areaCm2 < MIN_RING_AREA_CM2 || a.ring.density === null) {
     return "The surrounding ring could not be measured, so the crown cannot be compared with it.";
   }
   if (a.ring.density === 0) {

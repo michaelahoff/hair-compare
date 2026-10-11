@@ -5,7 +5,7 @@ import { comparable, type ScalpMetrics } from "@/lib/scalp/metrics";
 import { errorMessage, shortDate, type Photo } from "@/lib/model";
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
-const one = (v: number) => v.toFixed(1);
+const one = (v: number | null) => (v === null ? "–" : v.toFixed(1));
 
 /** One photo's column: the figures that can be read off it. */
 function Column({ photo, metrics }: { photo: Photo; metrics: ScalpMetrics }) {

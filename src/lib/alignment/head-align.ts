@@ -18,6 +18,7 @@ import { IDENTITY, type Similarity } from "./transform";
 import { erode, gaussianBlur, resizeArea, type Mask } from "../scalp/image-ops";
 import { headMask } from "../scalp/head-mask";
 import { lumaOf, resizeRgb, type RgbImage } from "../scalp/rgb";
+import { runSteps, runStepsAsync, type Steps } from "../steps";
 
 /** One photo's head, skin and edge channels at one working width. */
 export type HeadFeatures = {
@@ -279,12 +280,13 @@ function angleDiff(a: number, b: number): number {
 /**
  * Exhaustive turn × scale × shift search at the coarsest level, on head
  * pixels only. Returns the best few transforms that are not near-duplicates.
+ * Yields before each turn.
  */
-function coarseSearch(
+function* coarseSearch(
   ref: HeadFeatures,
   target: HeadFeatures,
   opts: HeadAlignOptions,
-): Similarity[] {
+): Steps<Similarity[]> {
   const { width: w, height: h } = ref;
   const rcx = (w - 1) / 2;
   const rcy = (h - 1) / 2;
@@ -295,6 +297,8 @@ function coarseSearch(
   const maxShift = Math.ceil(opts.maxTranslation * w);
   let refArea = 0;
   for (let i = 0; i < ref.mask.length; i++) refArea += ref.mask[i];
+  // No head in the reference: nothing to match, rather than floor scores.
+  if (refArea === 0) return [];
   const minPixels = MIN_OVERLAP * refArea;
   const wSkin = new Float32Array(w * h);
   const wEdge = new Float32Array(w * h);
@@ -310,6 +314,7 @@ function coarseSearch(
     scales.push(s);
 
   for (const rotation of rotations) {
+    yield;
     for (const scale of scales) {
       const a = Math.cos(rotation) * scale;
       const b = Math.sin(rotation) * scale;
@@ -467,18 +472,18 @@ function turned(
 /**
  * Estimate the similarity mapping `ref` onto `target` from their head
  * features (finest level first). Returns the best transform, the best in
- * each quarter-turn basin, and whether the turn is ambiguous.
+ * each quarter-turn basin, and whether the turn is ambiguous. Yields between
+ * stages; see `alignHeads` and `alignHeadsAsync`.
  */
-export function alignHeads(
+export function* alignHeadsSteps(
   ref: HeadFeatures[],
   target: HeadFeatures[],
   options: Partial<HeadAlignOptions> = {},
-): HeadAlignResult {
+): Steps<HeadAlignResult> {
   const opts = { ...DEFAULT_HEAD_ALIGN, ...options };
   const coarsest = ref.length - 1;
-  let candidates = coarseSearch(ref[coarsest], target[coarsest], opts).map(
-    (transform) => ({ transform, score: -Infinity }),
-  );
+  const picked = yield* coarseSearch(ref[coarsest], target[coarsest], opts);
+  let candidates = picked.map((transform) => ({ transform, score: -Infinity }));
   if (!candidates.length)
     return {
       transform: { ...IDENTITY },
@@ -490,11 +495,14 @@ export function alignHeads(
   let rotationStep = (opts.rotationStepDeg / 3) * (Math.PI / 180);
   let logScaleStep = Math.log(opts.scaleStep) / 2;
   for (let level = coarsest; level >= 0; level--) {
-    candidates = candidates
-      .map((c) =>
+    const refined: { transform: Similarity; score: number }[] = [];
+    for (const c of candidates) {
+      yield;
+      refined.push(
         refine(ref[level], target[level], c.transform, { rotationStep, logScaleStep }, opts),
-      )
-      .sort((a, b) => b.score - a.score);
+      );
+    }
+    candidates = refined.sort((a, b) => b.score - a.score);
     candidates = candidates.slice(0, Math.max(1, candidates.length >> 2));
     rotationStep /= 2;
     logScaleStep /= 2;
@@ -511,6 +519,7 @@ export function alignHeads(
     let rs = (opts.rotationStepDeg / 3) * (Math.PI / 180);
     let ls = Math.log(opts.scaleStep) / 2;
     for (let level = Math.min(1, coarsest); level >= 0; level--) {
+      yield;
       result = refine(ref[level], target[level], current, { rotationStep: rs, logScaleStep: ls }, opts);
       current = result.transform;
       rs /= 2;
@@ -538,4 +547,26 @@ export function alignHeads(
     ambiguous: Boolean(runnerUp && runnerUp.score > top.score - opts.ambiguityMargin),
     overlap: headScore(ref[0], target[0], top.transform, opts).overlap,
   };
+}
+
+/** `alignHeadsSteps` run straight through, for scripts and tests. */
+export function alignHeads(
+  ref: HeadFeatures[],
+  target: HeadFeatures[],
+  options: Partial<HeadAlignOptions> = {},
+): HeadAlignResult {
+  return runSteps(alignHeadsSteps(ref, target, options));
+}
+
+/**
+ * `alignHeadsSteps` with a pause between stages (about forty of them), so
+ * the app's UI keeps up while a pair is matched.
+ */
+export function alignHeadsAsync(
+  ref: HeadFeatures[],
+  target: HeadFeatures[],
+  options: Partial<HeadAlignOptions> = {},
+  pause?: () => Promise<void>,
+): Promise<HeadAlignResult> {
+  return runStepsAsync(alignHeadsSteps(ref, target, options), pause);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { alignHeads, headFeatures, headScore } from "./head-align";
+import { alignHeads, alignHeadsAsync, headFeatures, headScore } from "./head-align";
 import { rng } from "./test-images";
 import { applySimilarity, type Similarity } from "./transform";
 import { createRgb, type RgbImage } from "../scalp/rgb";
@@ -131,5 +131,29 @@ describe("alignHeads", () => {
       rotation: Math.PI,
     }).score;
     expect(right).toBeGreaterThan(flipped);
+  });
+});
+
+describe("alignHeadsAsync and headless photos", () => {
+  test("pausing between stages gives the same answer as running straight through", async () => {
+    const ref = headFeatures(scene(192, 256, IDENTITY, 1));
+    const target = headFeatures(scene(192, 256, { tx: 0.03, ty: 0.02, rotation: 0.3, scale: 1.1 }, 2));
+    const straight = alignHeads(ref.levels, target.levels);
+    let pauses = 0;
+    const paused = await alignHeadsAsync(ref.levels, target.levels, {}, async () => {
+      pauses++;
+    });
+    expect(pauses).toBeGreaterThan(30);
+    expect(paused).toEqual(straight);
+  });
+
+  test("a photo with no head gives an empty mask and no alternatives", () => {
+    const flat = createRgb(192, 256);
+    for (let i = 0; i < 192 * 256; i++) flat.data.set([200, 180, 150], i * 3);
+    const features = headFeatures(flat);
+    expect(features.mask.data.includes(1)).toBe(false);
+    const result = alignHeads(features.levels, features.levels);
+    expect(result.alternatives).toEqual([]);
+    expect(result.score).toBe(0);
   });
 });

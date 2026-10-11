@@ -5,67 +5,15 @@
  * image. Pure TypeScript: no React, Expo or Node imports.
  */
 import { createImage, type GrayImage } from "../alignment/image";
+import { runSteps, type Steps } from "../steps";
+import { gaussianBlur } from "./image-ops";
 
-/** Smaller regions give meaningless densities, so they are reported as NaN. */
+/** Smaller regions give meaningless densities, so they are reported as null. */
 const MIN_AREA_CM2 = 0.25;
-
-/** Index into a line of length n, mirrored at both ends (reflect-101). */
-function reflectIndex(i: number, n: number): number {
-  if (n === 1) return 0;
-  const period = 2 * (n - 1);
-  let j = i % period;
-  if (j < 0) j += period;
-  return j < n ? j : period - j;
-}
 
 /** Index held inside a line of length n (replicated border). */
 function clampIndex(i: number, n: number): number {
   return Math.min(Math.max(i, 0), n - 1);
-}
-
-/** Normalised 1-D Gaussian weights for offsets -radius..radius. */
-function gaussianKernel(sigma: number, radius: number): Float64Array {
-  const weights = new Float64Array(2 * radius + 1);
-  let sum = 0;
-  for (let k = -radius; k <= radius; k++) {
-    const weight = Math.exp(-(k * k) / (2 * sigma * sigma));
-    weights[k + radius] = weight;
-    sum += weight;
-  }
-  for (let i = 0; i < weights.length; i++) weights[i] /= sum;
-  return weights;
-}
-
-/**
- * Separable Gaussian blur with kernel radius ceil(3 * sigma) and reflect-101
- * borders. Filters the rows first, then the columns.
- */
-function gaussianBlur(img: GrayImage, sigma: number): GrayImage {
-  const { width: w, height: h, data } = img;
-  const radius = Math.ceil(3 * sigma);
-  if (radius < 1) return { width: w, height: h, data: data.slice() };
-  const kernel = gaussianKernel(sigma, radius);
-  const rows = createImage(w, h);
-  const out = createImage(w, h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let sum = 0;
-      for (let k = -radius; k <= radius; k++) {
-        sum += kernel[k + radius] * data[y * w + reflectIndex(x + k, w)];
-      }
-      rows.data[y * w + x] = sum;
-    }
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let sum = 0;
-      for (let k = -radius; k <= radius; k++) {
-        sum += kernel[k + radius] * rows.data[reflectIndex(y + k, h) * w + x];
-      }
-      out.data[y * w + x] = sum;
-    }
-  }
-  return out;
 }
 
 /**
@@ -127,16 +75,17 @@ export function hessianRidge(
 
 /**
  * Strongest response over several scales. Each pixel takes its value and its
- * theta from the scale that responds most there.
+ * theta from the scale that responds most there. Yields before each scale.
  */
-export function multiRidge(
+export function* multiRidgeSteps(
   img: GrayImage,
   sigmas: number[],
   dark: boolean,
-): { response: GrayImage; theta: GrayImage } {
+): Steps<{ response: GrayImage; theta: GrayImage }> {
   const best = createImage(img.width, img.height);
   const theta = createImage(img.width, img.height);
   for (const sigma of sigmas) {
+    yield;
     const scale = hessianRidge(img, sigma, dark);
     for (let i = 0; i < best.data.length; i++) {
       if (scale.response.data[i] > best.data[i]) {
@@ -146,6 +95,15 @@ export function multiRidge(
     }
   }
   return { response: best, theta };
+}
+
+/** `multiRidgeSteps` run straight through. */
+export function multiRidge(
+  img: GrayImage,
+  sigmas: number[],
+  dark: boolean,
+): { response: GrayImage; theta: GrayImage } {
+  return runSteps(multiRidgeSteps(img, sigmas, dark));
 }
 
 /** Bilinear sample at pixel coordinates; 0 outside the image. */
@@ -327,7 +285,7 @@ export function lineDensity(
   width: number,
   height: number,
   pxPerCm: number,
-): { lengthCm: number; areaCm2: number; density: number } {
+): { lengthCm: number; areaCm2: number; density: number | null } {
   let linePx = 0;
   let regionPx = 0;
   for (let i = 0; i < width * height; i++) {
@@ -337,7 +295,8 @@ export function lineDensity(
   }
   const lengthCm = linePx / pxPerCm;
   const areaCm2 = regionPx / (pxPerCm * pxPerCm);
-  const density = areaCm2 < MIN_AREA_CM2 ? Number.NaN : lengthCm / areaCm2;
+  // Null, not NaN: these are stored as JSON, which has no NaN.
+  const density = areaCm2 < MIN_AREA_CM2 ? null : lengthCm / areaCm2;
   return { lengthCm, areaCm2, density };
 }
 
@@ -348,7 +307,7 @@ export function lineDensity(
  * in cm, an estimate of line length per cm². It assumes lines point in all
  * directions equally. Only horizontal test lines are used, so oriented hair
  * will be biased. Runs that touch or cross on one row count once, so dense
- * crossing fields read low. Returns NaN when no region pixel is sampled.
+ * crossing fields read low. Returns null when no region pixel is sampled.
  */
 export function transectDensity(
   lines: Uint8Array,
@@ -357,7 +316,7 @@ export function transectDensity(
   height: number,
   pxPerCm: number,
   stepPx: number,
-): number {
+): number | null {
   const step = Math.max(1, Math.floor(stepPx));
   let crossings = 0;
   let sampledPx = 0;
@@ -371,6 +330,6 @@ export function transectDensity(
       if (runStart && lines[row + x] !== 0) crossings++;
     }
   }
-  if (sampledPx === 0) return Number.NaN;
+  if (sampledPx === 0) return null;
   return ((Math.PI / 2) * crossings) / (sampledPx / pxPerCm);
 }

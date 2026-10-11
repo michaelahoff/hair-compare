@@ -116,3 +116,12 @@ describe("skinMap", () => {
     expect(hairMax).toBeLessThan(0.1);
   });
 });
+
+describe("headMask with no head", () => {
+  test("a plain beige frame gives an empty mask, not a full one", () => {
+    const flat = createRgb(W, H);
+    for (let i = 0; i < W * H; i++) flat.data.set([200, 180, 150], i * 3);
+    const { mask: none } = headMask(flat);
+    expect(none.data.includes(1)).toBe(false);
+  });
+});

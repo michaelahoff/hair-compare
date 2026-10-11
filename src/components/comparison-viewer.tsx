@@ -266,8 +266,10 @@ export function ComparisonViewer({
     before: useReveal(before, reveal),
     after: useReveal(after, reveal),
   };
-  // Coverage figures are about the crown; other views only get the reveal.
-  const crownView = view === "crown" || view === "top";
+  // Coverage figures are about the crown and the ring of hair around it. A
+  // top view centres on its biggest bare patch, which may be the hairline, so
+  // other views only get the reveal.
+  const crownView = view === "crown";
   const [explain, setExplain] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [triedAi, setTriedAi] = useState<string[]>([]);
@@ -294,10 +296,10 @@ export function ComparisonViewer({
   const target = !framingOf(after) ? after : !framingOf(before) ? before : null;
   // A match that wasn't sure which way a head faces offers its other turns.
   const turnOptions = {
-    before: useTurnOptions(before.id),
-    after: useTurnOptions(after.id),
+    before: useTurnOptions(before.id, framingOf(before)),
+    after: useTurnOptions(after.id, framingOf(after)),
   };
-  const unsure = (["before", "after"] as const).find(
+  const unsure = (["before", "after"] as const).filter(
     (side) => turnOptions[side]?.ambiguous,
   );
   const other = target === after ? before : after;
@@ -572,9 +574,13 @@ export function ComparisonViewer({
           {framed && (
             <View style={styles.inline}>
               <Text style={[s.muted, { flexShrink: 1 }]}>
-                {unsure
-                  ? `Lined up, but not sure which way the ${formatDate(shown[unsure].taken_at)} head faces.`
-                  : "The photos are lined up."}
+                {unsure.length === 0
+                  ? "The photos are lined up."
+                  : unsure.length > 1
+                    ? "Lined up, but not sure which way either head faces."
+                    : turnOptions[unsure[0]]?.turned
+                      ? `Turned the ${formatDate(shown[unsure[0]].taken_at)} head. Still wrong? Turn it again, or adjust by hand.`
+                      : `Lined up, but not sure which way the ${formatDate(shown[unsure[0]].taken_at)} head faces.`}
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -585,19 +591,27 @@ export function ComparisonViewer({
               </Pressable>
             </View>
           )}
-          {framed && unsure && (
-            <Button
-              label="Turn it the other way"
-              icon="move"
-              variant="secondary"
-              onPress={() =>
-                void autoLineUp
-                  .turn(shown[unsure].id, framingOf(shown[unsure])!)
-                  .then(() => snapFeedback())
-                  .catch((e) => setError(errorMessage(e)))
-              }
-            />
-          )}
+          {framed &&
+            unsure.map((side) => (
+              <Button
+                key={side}
+                label={
+                  unsure.length > 1
+                    ? `Turn the ${formatDate(shown[side].taken_at)} photo`
+                    : turnOptions[side]?.turned
+                      ? "Turn it again"
+                      : "Turn it the other way"
+                }
+                icon="move"
+                variant="secondary"
+                onPress={() =>
+                  void autoLineUp
+                    .turn(shown[side].id, framingOf(shown[side])!)
+                    .then(() => snapFeedback())
+                    .catch((e) => setError(errorMessage(e)))
+                }
+              />
+            ))}
           {missed && target && (
             <>
               <Text style={s.body}>

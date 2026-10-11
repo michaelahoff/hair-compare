@@ -137,11 +137,11 @@ function LineUp({ photo }: { photo: Photo }) {
     // Its stored framing reads differently on the other picture; that's this
     // carry, not a change made elsewhere, so don't snap back to it.
     seen.current = framingKey(framingOf(photo, next));
+    const carry = guideCarry(photo.view, guide, next);
     if (stored || edit.touched.get())
-      snapFraming(
-        edit,
-        compose(guideCarry(photo.view, guide, next), settledFraming(edit)),
-      );
+      snapFraming(edit, compose(carry, settledFraming(edit)));
+    // The match's other turns were found on this picture too.
+    setOtherTurns((turns) => turns.map((t) => compose(carry, t)));
     setVariant(next);
   }
   const size = Math.round(Math.min(Math.min(width, 560) - 32, height * 0.58));
